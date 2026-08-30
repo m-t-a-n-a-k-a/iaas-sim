@@ -28,3 +28,30 @@ modules = ["iaas_sim.bootstrap"]
 ignore_imports = [
   "iaas_sim.bootstrap -> iaas_sim.bootstrap",
 ]
+
+[[import-linter.contract]]
+name = "http-adapters-cannot-import-other-adapters"
+type = "forbidden"
+source_modules = ["iaas_sim.adapters.http"]
+forbidden_modules = [
+  "iaas_sim.adapters.telemetry",
+  "iaas_sim.adapters.vsphere",
+]
+
+[[import-linter.contract]]
+name = "telemetry-adapters-cannot-import-other-adapters"
+type = "forbidden"
+source_modules = ["iaas_sim.adapters.telemetry"]
+forbidden_modules = [
+  "iaas_sim.adapters.http",
+  "iaas_sim.adapters.vsphere",
+]
+
+[[import-linter.contract]]
+name = "vsphere-adapters-cannot-import-other-adapters"
+type = "forbidden"
+source_modules = ["iaas_sim.adapters.vsphere"]
+forbidden_modules = [
+  "iaas_sim.adapters.http",
+  "iaas_sim.adapters.telemetry",
+]

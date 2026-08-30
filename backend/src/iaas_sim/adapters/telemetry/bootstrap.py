@@ -6,10 +6,13 @@ from typing import Final
 
 from fastapi import FastAPI
 from opentelemetry import metrics, trace
+from opentelemetry.exporter.otlp.proto.grpc._log_exporter import OTLPLogExporter
 from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import OTLPMetricExporter
 from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 from opentelemetry.instrumentation.logging import LoggingInstrumentor
+from opentelemetry.sdk._logs import LoggerProvider, LoggingHandler
+from opentelemetry.sdk._logs.export import BatchLogRecordProcessor
 from opentelemetry.sdk.metrics import MeterProvider
 from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
 from opentelemetry.sdk.resources import Resource
@@ -40,6 +43,15 @@ def configure_telemetry() -> None:
         meter_provider = MeterProvider(resource=resource, metric_readers=[metric_reader])
         metrics.set_meter_provider(meter_provider)
 
+    logging_provider = logging.getLogger().handlers
+    if not any(isinstance(handler, LoggingHandler) for handler in logging_provider):
+        log_provider = LoggerProvider(resource=resource)
+        log_exporter = OTLPLogExporter(endpoint=otlp_endpoint, insecure=True)
+        log_provider.add_log_record_processor(BatchLogRecordProcessor(log_exporter))
+        logger_handler = LoggingHandler(level=logging.INFO, logger_provider=log_provider)
+        logging.getLogger().addHandler(logger_handler)
+        logging.getLogger().setLevel(logging.INFO)
+
     LoggingInstrumentor().instrument(set_logging_format=True)
 
     logger.setLevel(logging.INFO)
@@ -59,7 +71,9 @@ def configure_telemetry() -> None:
 
 
 def instrument_fastapi_app(app: FastAPI) -> None:
-    FastAPIInstrumentor.instrument_app(app)
+    if not getattr(app.state, "telemetry_fastapi_instrumented", False):
+        FastAPIInstrumentor.instrument_app(app)
+        app.state.telemetry_fastapi_instrumented = True
 
 
 def configure_app_telemetry(app: FastAPI) -> None:

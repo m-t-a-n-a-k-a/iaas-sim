@@ -53,6 +53,33 @@ type = "forbidden"
 source_modules = ["iaas_sim.application"]
 forbidden_modules = ["iaas_sim.adapters"]
 
+[[tool.importlinter.contracts]]
+name = "http-adapters-cannot-import-other-adapters"
+type = "forbidden"
+source_modules = ["iaas_sim.adapters.http"]
+forbidden_modules = [
+  "iaas_sim.adapters.telemetry",
+  "iaas_sim.adapters.vsphere",
+]
+
+[[tool.importlinter.contracts]]
+name = "telemetry-adapters-cannot-import-other-adapters"
+type = "forbidden"
+source_modules = ["iaas_sim.adapters.telemetry"]
+forbidden_modules = [
+  "iaas_sim.adapters.http",
+  "iaas_sim.adapters.vsphere",
+]
+
+[[tool.importlinter.contracts]]
+name = "vsphere-adapters-cannot-import-other-adapters"
+type = "forbidden"
+source_modules = ["iaas_sim.adapters.vsphere"]
+forbidden_modules = [
+  "iaas_sim.adapters.http",
+  "iaas_sim.adapters.telemetry",
+]
+
 [build-system]
 requires = ["hatchling>=1.27.0"]
 build-backend = "hatchling.build"
