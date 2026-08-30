@@ -13,11 +13,13 @@ def vcsim_health_check() -> dict[str, object]:
     """Open a real pyVmomi session to vcsim and fetch minimal inventory."""
     host = os.getenv("VSPHERE_HOST", "vcsim")
     port = int(os.getenv("VSPHERE_PORT", "8989"))
+    protocol = os.getenv("VSPHERE_SCHEME", "https")
     username = os.getenv("VSPHERE_USERNAME", "user")
     password = os.getenv("VSPHERE_PASSWORD", "pass")
 
     try:
         service_instance = connect.SmartConnect(
+            protocol=protocol,
             host=host,
             port=port,
             user=username,

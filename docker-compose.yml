@@ -9,6 +9,7 @@ services:
     environment:
       VSPHERE_HOST: vcsim
       VSPHERE_PORT: "8989"
+      VSPHERE_SCHEME: https
       VSPHERE_USERNAME: user
       VSPHERE_PASSWORD: pass
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-lgtm:4317
@@ -32,11 +33,25 @@ services:
       start_period: 20s
 
   vcsim:
-    image: vmware/vcsim:latest
+    image: vmware/vcsim:v0.56.0
     container_name: vcsim
-    command: ["/vcsim", "-l", "0.0.0.0:8989", "-dc", "1", "-host", "1", "-pool", "1", "-vm", "1", "-ds", "1", "-pg", "1", "-folder", "1"]
-    ports:
-      - "8989:8989"
+    command:
+      - "-l"
+      - "0.0.0.0:8989"
+      - "-dc"
+      - "1"
+      - "-host"
+      - "1"
+      - "-pool"
+      - "1"
+      - "-vm"
+      - "1"
+      - "-ds"
+      - "1"
+      - "-pg"
+      - "1"
+      - "-folder"
+      - "1"
 
   dex:
     image: ghcr.io/dexidp/dex:v2.41.1

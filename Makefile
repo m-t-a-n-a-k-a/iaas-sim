@@ -15,7 +15,16 @@ logs:
 
 smoke-test:
 	docker compose up -d vcsim
-	cd backend && PYVMOMI_SMOKE=1 VSPHERE_HOST=127.0.0.1 VSPHERE_PORT=8989 VSPHERE_USERNAME=user VSPHERE_PASSWORD=pass ~/.local/bin/uv run pytest tests/test_vcsim_smoke.py
+	docker compose run --rm --no-deps \
+		-e PYVMOMI_SMOKE=1 \
+		-e VSPHERE_HOST=vcsim \
+		-e VSPHERE_PORT=8989 \
+		-e VSPHERE_SCHEME=https \
+		-e VSPHERE_USERNAME=user \
+		-e VSPHERE_PASSWORD=pass \
+		-v "$(CURDIR)/backend/tests/test_vcsim_smoke.py:/tmp/test_vcsim_smoke.py:ro" \
+		-w /app \
+		iaas-sim bash -lc '. .venv/bin/activate && PYTHONPATH=/app/src pytest -q /tmp/test_vcsim_smoke.py'
 
 backend-verify:
 	cd backend && ~/.local/bin/uv sync --locked --all-extras

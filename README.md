@@ -50,6 +50,8 @@ make verify
 
 ## Notes
 
+- Phase 1 validates the intended execution path inside the Docker Compose network: the application connects to the vSphere simulator using the service hostname `vcsim` over HTTPS.
+- Host-side `127.0.0.1` access is not treated as the completion criterion because it is an incidental local port-publishing path rather than the real application path.
 - This repository intentionally does not implement IAM, VM lifecycle, metering, or full cloud domain logic in Phase 1.
 - Phase 1 emphasizes architecture skeleton, infrastructure start-up, and static verification.
 - The project uses a strict Python typing setup and architecture import rules that are enforced in CI.

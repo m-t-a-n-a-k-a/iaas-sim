@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import os
+import ssl
 import time
+from urllib import error, request
 
 import pytest
 from pyVim import connect
@@ -16,32 +18,41 @@ from pyVmomi import vim
     ),
 )
 def test_vcsim_retrieve_content_success() -> None:
-    host = os.getenv("VSPHERE_HOST", "127.0.0.1")
+    host = os.getenv("VSPHERE_HOST", "vcsim")
     port = int(os.getenv("VSPHERE_PORT", "8989"))
+    scheme = os.getenv("VSPHERE_SCHEME", "https")
     username = os.getenv("VSPHERE_USERNAME", "user")
     password = os.getenv("VSPHERE_PASSWORD", "pass")
 
-    service_instance = None
+    readiness_url = f"{scheme}://{host}:{port}/about"
+    ssl_context = ssl.create_default_context()
+    ssl_context.check_hostname = False
+    ssl_context.verify_mode = ssl.CERT_NONE
     last_error: Exception | None = None
     for _ in range(30):
         try:
-            service_instance = connect.SmartConnect(
-                protocol="https",
-                host=host,
-                port=port,
-                user=username,
-                pwd=password,
-                disableSslCertValidation=True,
-            )
+            with request.urlopen(
+                readiness_url,
+                timeout=3,
+                context=ssl_context,
+            ):
+                pass
             break
-        except Exception as exc:  # pragma: no cover
-            # Startup race is expected while the compose vcsim service is booting.
+        except (error.URLError, OSError, ValueError) as exc:
             last_error = exc
             time.sleep(1)
+    assert last_error is None, f"vcsim did not become ready at {readiness_url}: {last_error}"
 
-    assert service_instance is not None, f"vcsim did not become ready: {last_error}"
-
+    service_instance = None
     try:
+        service_instance = connect.SmartConnect(
+            protocol=scheme,
+            host=host,
+            port=port,
+            user=username,
+            pwd=password,
+            disableSslCertValidation=True,
+        )
         content = service_instance.RetrieveContent()
         view_manager = content.viewManager
         assert view_manager is not None
@@ -54,4 +65,5 @@ def test_vcsim_retrieve_content_success() -> None:
         assert len(vms) >= 1
         assert content.rootFolder is not None
     finally:
-        connect.Disconnect(service_instance)
+        if service_instance is not None:
+            connect.Disconnect(service_instance)

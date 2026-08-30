@@ -50,6 +50,8 @@ make verify
 
 ## 補足
 
+- Phase 1では、アプリケーションと vSphere simulator の接続経路を Docker Compose network 内の `vcsim` ホスト名経由 HTTPS として検証する
+- host の `127.0.0.1` アクセスは、実際のアプリケーション経路ではないため completion criteria として扱わない
 - Phase 1では IAM、VM lifecycle、metering、full cloud domain の実装は行わない
 - Phase 1は architecture skeleton、インフラ起動、静的検証を中心に行う
 - CI では Type Check、lint、import rules、pytest などを必須で検証する
