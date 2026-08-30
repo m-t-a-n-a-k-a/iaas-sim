@@ -1,0 +1,16 @@
+{
+  "include": ["src", "tests"],
+  "exclude": ["**/__pycache__", "**/.venv"],
+  "typeCheckingMode": "strict",
+  "pythonVersion": "3.13",
+  "reportMissingTypeStubs": "warning",
+  "reportUnknownMemberType": "warning",
+  "reportUnknownVariableType": "warning",
+  "reportUnknownParameterType": "warning",
+  "reportUnknownArgumentType": "warning",
+  "reportImplicitOverride": "error",
+  "strictListInference": true,
+  "strictDictionaryInference": true,
+  "strictSetInference": true,
+  "useLibraryCodeForTypes": true
+}

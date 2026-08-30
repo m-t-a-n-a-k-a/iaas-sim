@@ -1,0 +1,30 @@
+[import-linter]
+root_package = "iaas_sim"
+
+[[import-linter.contract]]
+name = "domain-is-core"
+type = "layers"
+containers = ["iaas_sim"]
+layers = [
+  "iaas_sim.domain",
+  "iaas_sim.application",
+  "iaas_sim.adapters",
+  "iaas_sim.bootstrap",
+]
+
+[[import-linter.contract]]
+name = "application-is-not-allowed-to-import-adapters"
+type = "modules"
+modules = ["iaas_sim.application"]
+ignore_imports = [
+  "iaas_sim.application -> iaas_sim.domain",
+  "iaas_sim.application -> iaas_sim.application",
+]
+
+[[import-linter.contract]]
+name = "bootstrap-is-composition-root"
+type = "modules"
+modules = ["iaas_sim.bootstrap"]
+ignore_imports = [
+  "iaas_sim.bootstrap -> iaas_sim.bootstrap",
+]

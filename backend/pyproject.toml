@@ -1,0 +1,63 @@
+[project]
+name = "iaas-sim"
+version = "0.1.0"
+description = "Small IaaS cloud simulator for learning and validation"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+  "fastapi>=0.116.1",
+  "uvicorn[standard]>=0.35.0",
+  "pyVmomi>=8.0.3.0.1",
+  "opentelemetry-api>=1.34.0",
+  "opentelemetry-sdk>=1.34.0",
+  "opentelemetry-exporter-otlp-proto-grpc>=1.34.0",
+  "opentelemetry-instrumentation-fastapi>=0.55b0",
+  "opentelemetry-instrumentation-logging>=0.55b0",
+  "python-dotenv>=1.1.1",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.3.5",
+  "pytest-cov>=6.0.0",
+  "pyright>=1.1.393",
+  "ruff>=0.8.4",
+  "import-linter>=2.0.0",
+]
+
+[tool.uv]
+package = true
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.importlinter]
+root_packages = ["iaas_sim"]
+
+[[tool.importlinter.contracts]]
+name = "domain-is-core"
+type = "layers"
+containers = ["iaas_sim"]
+layers = [
+  "bootstrap",
+  "adapters",
+  "application",
+  "domain",
+]
+
+[[tool.importlinter.contracts]]
+name = "application-cannot-import-adapters"
+type = "forbidden"
+source_modules = ["iaas_sim.application"]
+forbidden_modules = ["iaas_sim.adapters"]
+
+[build-system]
+requires = ["hatchling>=1.27.0"]
+build-backend = "hatchling.build"
+
+[dependency-groups]
+dev = [
+    "httpx>=0.28.1",
+]

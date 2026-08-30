@@ -1,0 +1,58 @@
+services:
+  iaas-sim:
+    build:
+      context: ./backend
+      dockerfile: ../docker/backend.Dockerfile
+    container_name: iaas-sim
+    env_file:
+      - .env
+    environment:
+      VSPHERE_HOST: vcsim
+      VSPHERE_PORT: "8989"
+      VSPHERE_USERNAME: user
+      VSPHERE_PASSWORD: pass
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-lgtm:4317
+      OTEL_SERVICE_NAME: iaas-sim
+    depends_on:
+      - vcsim
+      - otel-lgtm
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health').read()"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  vcsim:
+    image: python:3.11-slim
+    container_name: vcsim
+    ports:
+      - "8989:8989"
+    command: ["python", "-m", "http.server", "8989", "--bind", "0.0.0.0"]
+    working_dir: /app
+
+  dex:
+    image: ghcr.io/dexidp/dex:v2.41.1
+    container_name: dex
+    ports:
+      - "5556:5556"
+    volumes:
+      - ./docker/dex-config.yaml:/etc/dex/config.yaml:ro
+      - dex-data:/var/lib/dex
+    command: ["dex", "serve", "/etc/dex/config.yaml"]
+
+  otel-lgtm:
+    image: grafana/otel-lgtm:latest
+    container_name: otel-lgtm
+    ports:
+      - "3000:3000"
+      - "4317:4317"
+      - "4318:4318"
+      - "3200:3200"
+    environment:
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-lgtm:4317
+
+volumes:
+  dex-data:

@@ -1,0 +1,32 @@
+issuer: http://dex:5556/dex
+storage:
+  type: sqlite3
+  config:
+    file: /var/lib/dex/dex.db
+
+web:
+  http: 0.0.0.0:5556
+
+grpc:
+  addr: 0.0.0.0:5557
+
+oauth2:
+  skip approval screen: true
+
+staticClients:
+  - id: iaas-sim
+    redirectURIs:
+      - http://localhost:8000/callback
+    name: iaas-sim
+    secret: DEVELOPMENT_ONLY_NOT_FOR_PRODUCTION
+
+enablePasswordDB: true
+
+staticPasswords:
+  - email: "admin@example.com"
+    hash: "$2a$10$2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b"
+    username: "admin"
+    userID: "08a8684b-db8b-4c9b-9d0a-2f13d5c2f5f0"
+
+# DEVELOPMENT ONLY
+# NOT FOR PRODUCTION
