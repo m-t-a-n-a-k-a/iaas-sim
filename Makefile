@@ -14,7 +14,7 @@ logs:
 	docker compose logs -f
 
 backend-verify:
-	cd backend && ~/.local/bin/uv sync --all-extras
+	cd backend && ~/.local/bin/uv sync --locked --all-extras
 	cd backend && ~/.local/bin/uv run pyright
 	cd backend && ~/.local/bin/uv run ruff check .
 	cd backend && ~/.local/bin/uv run ruff format --check .

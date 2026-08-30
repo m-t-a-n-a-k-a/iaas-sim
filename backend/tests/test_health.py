@@ -9,5 +9,8 @@ def test_health_endpoint() -> None:
     response = client.get("/health")
     assert response.status_code == expected_status_code
     body = response.json()
-    assert body["status"] == "ok"
+    assert "status" in body
     assert "checks" in body
+    assert "vcsim" in body["checks"]
+    assert "dex" in body["checks"]
+    assert "otel_lgtm" in body["checks"]

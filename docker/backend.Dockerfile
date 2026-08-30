@@ -8,10 +8,10 @@ WORKDIR /app
 
 RUN pip install --no-cache-dir uv
 
-COPY pyproject.toml README.md ./
+COPY pyproject.toml uv.lock README.md ./
 COPY src ./src
 
-RUN uv venv .venv && . .venv/bin/activate && uv pip install --system .[dev]
+RUN uv sync --locked --all-extras
 
 EXPOSE 8000
 

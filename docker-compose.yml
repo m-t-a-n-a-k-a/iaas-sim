@@ -13,9 +13,15 @@ services:
       VSPHERE_PASSWORD: pass
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-lgtm:4317
       OTEL_SERVICE_NAME: iaas-sim
+      DEX_HEALTH_URL: http://dex:5556/healthz
+      OTEL_HEALTH_URL: http://otel-lgtm:3000/api/health
     depends_on:
-      - vcsim
-      - otel-lgtm
+      vcsim:
+        condition: service_started
+      dex:
+        condition: service_started
+      otel-lgtm:
+        condition: service_started
     ports:
       - "8000:8000"
     healthcheck:
@@ -26,12 +32,11 @@ services:
       start_period: 20s
 
   vcsim:
-    image: python:3.11-slim
+    image: vmware/vcsim:latest
     container_name: vcsim
+    command: ["/vcsim", "-l", "0.0.0.0:8989", "-dc", "1", "-host", "1", "-pool", "1", "-vm", "1", "-ds", "1", "-pg", "1", "-folder", "1"]
     ports:
       - "8989:8989"
-    command: ["python", "-m", "http.server", "8989", "--bind", "0.0.0.0"]
-    working_dir: /app
 
   dex:
     image: ghcr.io/dexidp/dex:v2.41.1
@@ -41,10 +46,16 @@ services:
     volumes:
       - ./docker/dex-config.yaml:/etc/dex/config.yaml:ro
       - dex-data:/var/lib/dex
-    command: ["dex", "serve", "/etc/dex/config.yaml"]
+    command: ["sh", "-lc", "mkdir -p /var/lib/dex && dex serve /etc/dex/config.yaml"]
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:5556/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
 
   otel-lgtm:
-    image: grafana/otel-lgtm:latest
+    image: grafana/otel-lgtm:0.11.4
     container_name: otel-lgtm
     ports:
       - "3000:3000"
@@ -53,6 +64,25 @@ services:
       - "3200:3200"
     environment:
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-lgtm:4317
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3000/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
+  frontend:
+    image: node:24-alpine
+    container_name: iaas-sim-frontend
+    working_dir: /app
+    volumes:
+      - ./frontend:/app
+    command: sh -lc "npm install && npm run dev -- --host 0.0.0.0 --port 4173"
+    ports:
+      - "4173:4173"
+    depends_on:
+      iaas-sim:
+        condition: service_healthy
 
 volumes:
   dex-data:

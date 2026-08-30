@@ -1,22 +1,28 @@
 from __future__ import annotations
 
+import logging
 from collections.abc import AsyncGenerator
-from contextlib import asynccontextmanager, suppress
+from contextlib import asynccontextmanager
 from typing import Final
 
 from fastapi import FastAPI
-from fastapi.responses import HTMLResponse
+from fastapi.responses import RedirectResponse
 
 from iaas_sim.adapters.http.health import health_router
 from iaas_sim.adapters.http.openapi import openapi_router
 from iaas_sim.adapters.http.ui import ui_router
 from iaas_sim.adapters.vsphere.health import vcsim_health_check
+from iaas_sim.bootstrap.telemetry import configure_app_telemetry
+
+logger: Final[logging.Logger] = logging.getLogger("iaas_sim.bootstrap.main")
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncGenerator[None]:
-    with suppress(Exception):
+    try:
         vcsim_health_check()
+    except Exception:
+        logger.exception("startup vSphere probe failed")
     yield
 
 
@@ -27,14 +33,16 @@ app: Final[FastAPI] = FastAPI(
     lifespan=lifespan,
 )
 
+configure_app_telemetry(app)
+
 app.include_router(health_router)
 app.include_router(openapi_router)
 app.include_router(ui_router)
 
 
-@app.get("/", response_class=HTMLResponse)
-def root() -> str:
-    return "<html><body><h1>iaas-sim placeholder</h1></body></html>"
+@app.get("/", include_in_schema=False)
+def root() -> RedirectResponse:
+    return RedirectResponse(url="/docs")
 
 
 @app.get("/openapi.json")
