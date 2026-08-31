@@ -70,3 +70,10 @@ Result / Railway policy:
 - Exceptions are for unexpected programming errors and bootstrap boundary handling, not for expected domain/application failures.
 - Keep the Result API minimal; do not build a custom FP framework or broad helper ecosystem before a real need exists.
 - Keep Pyright strict and readable; avoid Any, cast, or type: ignore when narrowing Result values.
+
+Testing policy:
+
+- When behavior is determined by combinations of finite states, commands, roles, scopes, or inputs, prefer table-driven tests using pytest.mark.parametrize.
+- The table should expose the relevant state space explicitly rather than duplicating one test function per case.
+- Use descriptive pytest.param(..., id="...") identifiers.
+- Do not force parametrization onto one-off integration/smoke tests where there is no meaningful case matrix.
