@@ -58,3 +58,15 @@ Future design notes:
 - Metering: Compute Usage = VM RUNNING time; Volume Usage = provisioned GiB × existence time
 - Metering and OpenTelemetry metrics are separate concerns
 - Long-running operations are modeled later as asynchronous command + Operation Resource, not implemented in Phase 1
+
+Result / Railway policy:
+
+- Use a project-local Ok / Err / Result primitive; do not add external FP libraries.
+- Expected failures are typed Result values, not exceptions, and are propagated as control flow.
+- Prefer railway-style pipelines: input -> Result -> Result -> Result -> output, and stop on the first Err.
+- Adapter boundaries may catch external exceptions and convert them to typed Err values; domain and application code should not use try/except for expected failures.
+- Use ADT / Enum / Union + match for meaningful states; keep simple booleans and if statements where they are clearer.
+- State transitions should prefer table-driven or decision-table logic over nested if/else chains.
+- Exceptions are for unexpected programming errors and bootstrap boundary handling, not for expected domain/application failures.
+- Keep the Result API minimal; do not build a custom FP framework or broad helper ecosystem before a real need exists.
+- Keep Pyright strict and readable; avoid Any, cast, or type: ignore when narrowing Result values.

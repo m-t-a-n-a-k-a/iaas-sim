@@ -13,16 +13,18 @@ from iaas_sim.adapters.http.openapi import openapi_router
 from iaas_sim.adapters.http.ui import ui_router
 from iaas_sim.adapters.vsphere.health import vcsim_health_check
 from iaas_sim.bootstrap.telemetry import configure_app_telemetry
+from iaas_sim.result import Err, Ok
 
 logger: Final[logging.Logger] = logging.getLogger("iaas_sim.bootstrap.main")
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncGenerator[None]:
-    try:
-        vcsim_health_check()
-    except Exception:
-        logger.exception("startup vSphere probe failed")
+    match vcsim_health_check():
+        case Ok(value):
+            logger.info("startup vSphere probe succeeded: %s", value.get("virtual_machine_count"))
+        case Err(error):
+            logger.warning("startup vSphere probe failed: %s", error)
     yield
 
 

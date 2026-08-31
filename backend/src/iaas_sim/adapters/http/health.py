@@ -9,9 +9,11 @@ from urllib import request
 
 from fastapi import APIRouter
 
+from iaas_sim.result import Err, Ok, Result
+
 logger: Final[logging.Logger] = logging.getLogger("iaas_sim.http.health")
 
-HealthProbe = Callable[[], dict[str, object]]
+HealthProbe = Callable[[], object]
 
 
 def create_health_router(
@@ -26,36 +28,58 @@ def create_health_router(
         status = check.get("status")
         return isinstance(status, str) and status == "ok"
 
-    def _probe_url(url: str) -> dict[str, object]:
+    def _probe_url(url: str) -> Result[dict[str, object], str]:
         try:
             with request.urlopen(url, timeout=5) as response:
                 payload_bytes = response.read()
                 payload = payload_bytes.decode("utf-8")
                 if payload:
                     try:
-                        return {"status": "ok", "url": url, "details": json.loads(payload)}
+                        details = json.loads(payload)
+                        payload_result = {
+                            "status": "ok",
+                            "url": url,
+                            "details": details,
+                        }
+                        return Ok(dict[str, object](payload_result))
                     except json.JSONDecodeError:
-                        return {"status": "ok", "url": url, "details": payload}
-            return {"status": "ok", "url": url}
+                        payload_result = {
+                            "status": "ok",
+                            "url": url,
+                            "details": payload,
+                        }
+                        return Ok(dict[str, object](payload_result))
+            return Ok(dict[str, object]({"status": "ok", "url": url}))
         except Exception as exc:  # pragma: no cover
             logger.exception("health probe failed for %s", url)
-            return {"status": "error", "url": url, "error": str(exc)}
+            return Err(f"{url}: {exc}")
 
     def _current_health() -> dict[str, object]:
         checks: dict[str, dict[str, object]] = {}
 
         for name, probe in probe_map.items():
-            try:
-                checks[name] = probe()
-            except Exception as exc:  # pragma: no cover
-                logger.exception("%s health probe failed", name)
-                checks[name] = {"status": "error", "error": str(exc)}
+            match probe():
+                case Ok(value):
+                    checks[name] = value
+                case Err(error):
+                    logger.exception("%s health probe failed", name)
+                    checks[name] = {"status": "error", "error": str(error)}
+                case _:
+                    checks[name] = {"status": "error", "error": "unknown health result"}
 
         dex_url = os.getenv("DEX_HEALTH_URL", "http://dex:5556/healthz")
-        checks["dex"] = _probe_url(dex_url)
+        match _probe_url(dex_url):
+            case Ok(value):
+                checks["dex"] = value
+            case Err(error):
+                checks["dex"] = {"status": "error", "url": dex_url, "error": str(error)}
 
         otel_url = os.getenv("OTEL_HEALTH_URL", "http://otel-lgtm:3000/api/health")
-        checks["otel_lgtm"] = _probe_url(otel_url)
+        match _probe_url(otel_url):
+            case Ok(value):
+                checks["otel_lgtm"] = value
+            case Err(error):
+                checks["otel_lgtm"] = {"status": "error", "url": otel_url, "error": str(error)}
 
         overall_status = "ok" if all(_is_ok_status(check) for check in checks.values()) else "error"
         return {"status": overall_status, "checks": checks}
