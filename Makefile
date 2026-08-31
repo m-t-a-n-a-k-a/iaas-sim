@@ -1,6 +1,9 @@
-.PHONY: up down reset logs verify backend-verify frontend-verify smoke-test
+.PHONY: up down reset logs verify backend-verify frontend-verify smoke-test .env
 
-up:
+.env:
+	cp -n .env.example .env 2>/dev/null || true
+
+up: .env
 	docker compose up --build -d
 
 down:
@@ -13,7 +16,7 @@ reset:
 logs:
 	docker compose logs -f
 
-smoke-test:
+smoke-test: .env
 	docker compose up -d vcsim
 	docker compose run --rm --no-deps \
 		-e PYVMOMI_SMOKE=1 \
@@ -40,5 +43,4 @@ frontend-verify:
 	cd frontend && npm run build
 
 verify: backend-verify frontend-verify smoke-test
-	cp -n .env.example .env 2>/dev/null || true
 	docker compose config > /dev/null
