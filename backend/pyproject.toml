@@ -54,6 +54,17 @@ source_modules = ["iaas_sim.application"]
 forbidden_modules = ["iaas_sim.adapters"]
 
 [[tool.importlinter.contracts]]
+name = "result-is-pure-primitive"
+type = "forbidden"
+source_modules = ["iaas_sim.result"]
+forbidden_modules = [
+  "iaas_sim.domain",
+  "iaas_sim.application",
+  "iaas_sim.adapters",
+  "iaas_sim.bootstrap",
+]
+
+[[tool.importlinter.contracts]]
 name = "http-adapters-cannot-import-other-adapters"
 type = "forbidden"
 source_modules = ["iaas_sim.adapters.http"]

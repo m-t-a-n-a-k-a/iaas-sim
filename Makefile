@@ -1,7 +1,9 @@
-.PHONY: up down reset logs verify backend-verify frontend-verify smoke-test .env
+.PHONY: prepare up down reset logs verify backend-verify frontend-verify smoke-test .env
 
 .env:
 	cp -n .env.example .env 2>/dev/null || true
+
+prepare: .env
 
 up: .env
 	docker compose up --build -d
@@ -16,7 +18,7 @@ reset:
 logs:
 	docker compose logs -f
 
-smoke-test: .env
+smoke-test: prepare
 	docker compose up -d vcsim
 	docker compose run --rm --no-deps \
 		-e PYVMOMI_SMOKE=1 \
@@ -29,7 +31,7 @@ smoke-test: .env
 		-w /app \
 		iaas-sim bash -lc '. .venv/bin/activate && PYTHONPATH=/app/src pytest -q /tmp/test_vcsim_smoke.py'
 
-backend-verify:
+backend-verify: prepare
 	cd backend && ~/.local/bin/uv sync --locked --all-extras
 	cd backend && ~/.local/bin/uv run pyright
 	cd backend && ~/.local/bin/uv run ruff check .

@@ -9,6 +9,9 @@ import pytest
 from pyVim import connect
 from pyVmomi import vim
 
+from iaas_sim.adapters.vsphere.virtual_machine import VSphereVirtualMachineAdapter
+from iaas_sim.result import Ok
+
 
 @pytest.mark.skipif(
     os.getenv("PYVMOMI_SMOKE") != "1",
@@ -28,6 +31,7 @@ def test_vcsim_retrieve_content_success() -> None:
     ssl_context = ssl.create_default_context()
     ssl_context.check_hostname = False
     ssl_context.verify_mode = ssl.CERT_NONE
+    ready = False
     last_error: Exception | None = None
     for _ in range(30):
         try:
@@ -37,11 +41,12 @@ def test_vcsim_retrieve_content_success() -> None:
                 context=ssl_context,
             ):
                 pass
+            ready = True
             break
         except (error.URLError, OSError, ValueError) as exc:
             last_error = exc
             time.sleep(1)
-    assert last_error is None, f"vcsim did not become ready at {readiness_url}: {last_error}"
+    assert ready, f"vcsim did not become ready at {readiness_url}: {last_error}"
 
     service_instance = None
     try:
@@ -64,6 +69,14 @@ def test_vcsim_retrieve_content_success() -> None:
         vms = list(inventory.view)
         assert len(vms) >= 1
         assert content.rootFolder is not None
+
+        adapter = VSphereVirtualMachineAdapter()
+        listed = adapter.list_virtual_machines()
+        assert isinstance(listed, Ok)
+        assert len(listed.value) >= 1
+        fetched = adapter.get_virtual_machine(listed.value[0].id)
+        assert isinstance(fetched, Ok)
+        assert fetched.value.id == listed.value[0].id
     finally:
         if service_instance is not None:
             connect.Disconnect(service_instance)

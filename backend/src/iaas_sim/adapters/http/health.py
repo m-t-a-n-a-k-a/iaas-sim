@@ -62,7 +62,7 @@ def create_health_router(
                 case Ok(value):
                     checks[name] = value
                 case Err(error):
-                    logger.exception("%s health probe failed", name)
+                    logger.warning("%s health probe failed: %s", name, error)
                     checks[name] = {"status": "error", "error": str(error)}
                 case _:
                     checks[name] = {"status": "error", "error": "unknown health result"}
