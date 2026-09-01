@@ -21,6 +21,12 @@ from iaas_sim.domain.entity.virtual_machine import (
 )
 from iaas_sim.result import Err, Ok, Result
 
+# HTTP status codes
+STATUS_OK = 200
+STATUS_ACCEPTED = 202
+STATUS_CONFLICT = 409
+STATUS_NOT_IMPLEMENTED = 501
+
 
 class FakePort:
     """Test port for HTTP layer: simulates async power submission."""
@@ -57,13 +63,13 @@ def test_virtual_machine_routes() -> None:
     client = TestClient(app)
 
     # GET list
-    assert client.get("/v1/virtualMachines").status_code == 200
+    assert client.get("/v1/virtualMachines").status_code == STATUS_OK
     assert client.get("/v1/virtualMachines").json() == {
         "items": [{"id": "vm-1", "name": "demo", "powerState": "STOPPED"}]
     }
 
     # GET single
-    assert client.get("/v1/virtualMachines/vm-1").status_code == 200
+    assert client.get("/v1/virtualMachines/vm-1").status_code == STATUS_OK
 
 
 def test_power_command_returns_202_accepted() -> None:
@@ -75,7 +81,7 @@ def test_power_command_returns_202_accepted() -> None:
 
     # POST :start
     response = client.post("/v1/virtualMachines/vm-1:start")
-    assert response.status_code == 202
+    assert response.status_code == STATUS_ACCEPTED
 
     # Verify Location header
     assert "Location" in response.headers
@@ -100,7 +106,7 @@ def test_power_command_start_on_running_vm_rejected() -> None:
     client = TestClient(app)
 
     response = client.post("/v1/virtualMachines/vm-1:start")
-    assert response.status_code == 409
+    assert response.status_code == STATUS_CONFLICT
 
 
 def test_operation_get_not_implemented() -> None:
@@ -110,4 +116,4 @@ def test_operation_get_not_implemented() -> None:
     client = TestClient(app)
 
     response = client.get("/v1/operations/some-id")
-    assert response.status_code == 501
+    assert response.status_code == STATUS_NOT_IMPLEMENTED
