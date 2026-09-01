@@ -14,16 +14,11 @@ class FakeRuntimeInfo:
     powerState: object
 
 
-@dataclass
-class FakeSummaryInfo:
-    runtime: FakeRuntimeInfo
-
-
 class FakeVirtualMachine:
     def __init__(self, power_state: str) -> None:
         self._moId = "vm-1"
         self.name = "demo"
-        self.summary = FakeSummaryInfo(FakeRuntimeInfo(power_state))
+        self.runtime = FakeRuntimeInfo(power_state)
 
     def PowerOnVM_Task(self) -> object:
         return object()
@@ -39,7 +34,7 @@ class FakeVirtualMachine:
         pytest.param("poweredOff", PowerState.STOPPED, id="powered-off"),
     ],
 )
-def test_to_domain_reads_observed_state_from_summary_runtime(
+def test_to_domain_reads_observed_state_from_runtime(
     backend_state: str, expected: PowerState
 ) -> None:
     vm = FakeVirtualMachine(backend_state)
