@@ -91,15 +91,14 @@ class VSphereVirtualMachineAdapter:
         """
         virtual_machine_id = VirtualMachineId(self._managed_object_id(vm))
         try:
-            summary = getattr(vm, "summary", None)
-            if summary is None:
-                raise ValueError("vm.summary is not available")
-            runtime = getattr(summary, "runtime", None)
+            # Try to get power state from vm.runtime.powerState
+            # (summary may not be available in all backends like vcsim)
+            runtime = getattr(vm, "runtime", None)
             if runtime is None:
-                raise ValueError("vm.summary.runtime is not available")
+                raise ValueError("vm.runtime is not available")
             power_state_obj = getattr(runtime, "powerState", None)
             if power_state_obj is None:
-                raise ValueError("vm.summary.runtime.powerState is not available")
+                raise ValueError("vm.runtime.powerState is not available")
             power_state_str = str(power_state_obj)
             state = {
                 "poweredOn": PowerState.RUNNING,
@@ -124,13 +123,19 @@ class VSphereVirtualMachineAdapter:
             inventory = view_manager.CreateContainerView(
                 content.rootFolder, [vim.VirtualMachine], True
             )
-            return Ok(
-                tuple(
-                    self._to_domain(vm)
-                    for vm in inventory.view
-                    if isinstance(vm, _VirtualMachineObject)
-                )
-            )
+            vms: list[VirtualMachine] = []
+            for vm in inventory.view:
+                if not isinstance(vm, _VirtualMachineObject):
+                    continue
+                try:
+                    vms.append(self._to_domain(vm))
+                except ValueError as exc:
+                    logger.warning(
+                        "Skipping VM %s: %s",
+                        self._managed_object_id(vm),
+                        exc,
+                    )
+            return Ok(tuple(vms))
         except Exception as exc:
             logger.exception("vSphere VM listing failed")
             return Err(VirtualMachineAdapterFailure("list", str(exc)))
