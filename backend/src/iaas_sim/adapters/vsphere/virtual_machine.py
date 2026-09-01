@@ -39,17 +39,22 @@ class VsphereTaskRef:
 
 
 class _RuntimeInfo(Protocol):
-    powerState: object
+    @property
+    def powerState(self) -> object: ...
 
 
 class _SummaryInfo(Protocol):
-    runtime: _RuntimeInfo
+    @property
+    def runtime(self) -> _RuntimeInfo: ...
 
 
 @runtime_checkable
 class _VirtualMachineObject(Protocol):
-    name: str
-    summary: _SummaryInfo
+    @property
+    def name(self) -> str: ...
+
+    @property
+    def summary(self) -> _SummaryInfo: ...
 
     def PowerOnVM_Task(self) -> object: ...
 
@@ -103,24 +108,13 @@ class VSphereVirtualMachineAdapter:
         VirtualMachine.power_state reflects backend-observed state.
         """
         virtual_machine_id = VirtualMachineId(self._managed_object_id(vm))
-        try:
-            # Try to get power state from vm.runtime.powerState
-            # (summary may not be available in all backends like vcsim)
-            runtime = getattr(vm, "runtime", None)
-            if runtime is None:
-                raise ValueError("vm.runtime is not available")
-            power_state_obj = getattr(runtime, "powerState", None)
-            if power_state_obj is None:
-                raise ValueError("vm.runtime.powerState is not available")
-            power_state_str = str(power_state_obj)
-            state = {
-                "poweredOn": PowerState.RUNNING,
-                "poweredOff": PowerState.STOPPED,
-            }.get(power_state_str)
-            if state is None:
-                raise ValueError(f"unsupported power state: {power_state_str}")
-        except (AttributeError, ValueError) as exc:
-            raise ValueError(f"failed to extract power state from vm: {exc}") from exc
+        power_state = str(vm.summary.runtime.powerState)
+        state = {
+            "poweredOn": PowerState.RUNNING,
+            "poweredOff": PowerState.STOPPED,
+        }.get(power_state)
+        if state is None:
+            raise ValueError(f"unsupported power state: {power_state}")
         return VirtualMachine(virtual_machine_id, str(vm.name), state)
 
     def list_virtual_machines(
