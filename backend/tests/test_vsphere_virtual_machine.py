@@ -3,8 +3,8 @@ from dataclasses import dataclass
 import pytest
 
 from iaas_sim.adapters.vsphere.virtual_machine import (
-    VSphereVirtualMachineAdapter,
-    _VirtualMachineObject,
+    VsphereVirtualMachineObject,
+    project_virtual_machine,
 )
 from iaas_sim.domain.entity.virtual_machine import PowerState, VirtualMachine, VirtualMachineId
 
@@ -43,16 +43,16 @@ def test_to_domain_reads_observed_state_from_summary_runtime(
     backend_state: str, expected: PowerState
 ) -> None:
     vm = FakeVirtualMachine(backend_state)
-    assert isinstance(vm, _VirtualMachineObject)
+    assert isinstance(vm, VsphereVirtualMachineObject)
 
-    projected = VSphereVirtualMachineAdapter()._to_domain(vm)
+    projected = project_virtual_machine(vm)
 
     assert projected == VirtualMachine(VirtualMachineId("vm-1"), "demo", expected)
 
 
 def test_to_domain_rejects_unsupported_backend_state() -> None:
     vm = FakeVirtualMachine("suspended")
-    assert isinstance(vm, _VirtualMachineObject)
+    assert isinstance(vm, VsphereVirtualMachineObject)
 
     with pytest.raises(ValueError, match="unsupported power state: suspended"):
-        VSphereVirtualMachineAdapter()._to_domain(vm)
+        project_virtual_machine(vm)

@@ -38,27 +38,40 @@ class VsphereTaskRef:
     managed_object_reference: str
 
 
-class _RuntimeInfo(Protocol):
+class VsphereRuntimeInfo(Protocol):
     @property
     def powerState(self) -> object: ...
 
 
-class _SummaryInfo(Protocol):
+class VsphereSummaryInfo(Protocol):
     @property
-    def runtime(self) -> _RuntimeInfo: ...
+    def runtime(self) -> VsphereRuntimeInfo: ...
 
 
 @runtime_checkable
-class _VirtualMachineObject(Protocol):
+class VsphereVirtualMachineObject(Protocol):
     @property
     def name(self) -> str: ...
 
     @property
-    def summary(self) -> _SummaryInfo: ...
+    def summary(self) -> VsphereSummaryInfo: ...
 
     def PowerOnVM_Task(self) -> object: ...
 
     def PowerOffVM_Task(self) -> object: ...
+
+
+def project_virtual_machine(vm: VsphereVirtualMachineObject) -> VirtualMachine:
+    """Project a vSphere VM's observed summary into the Domain entity."""
+    virtual_machine_id = VirtualMachineId(str(object.__getattribute__(vm, "_moId")))
+    power_state = str(vm.summary.runtime.powerState)
+    state = {
+        "poweredOn": PowerState.RUNNING,
+        "poweredOff": PowerState.STOPPED,
+    }.get(power_state)
+    if state is None:
+        raise ValueError(f"unsupported power state: {power_state}")
+    return VirtualMachine(virtual_machine_id, str(vm.name), state)
 
 
 class VSphereVirtualMachineAdapter:
@@ -73,7 +86,7 @@ class VSphereVirtualMachineAdapter:
     """
 
     @staticmethod
-    def _managed_object_id(vm: _VirtualMachineObject) -> str:
+    def _managed_object_id(vm: VsphereVirtualMachineObject) -> str:
         return str(object.__getattribute__(vm, "_moId"))
 
     def _connect(self) -> vim.ServiceInstance:
@@ -88,34 +101,18 @@ class VSphereVirtualMachineAdapter:
 
     def _find(
         self, service_instance: vim.ServiceInstance, virtual_machine_id: VirtualMachineId
-    ) -> _VirtualMachineObject | None:
+    ) -> VsphereVirtualMachineObject | None:
         content = service_instance.RetrieveContent()
         view_manager = content.viewManager
         if view_manager is None:
             return None
         inventory = view_manager.CreateContainerView(content.rootFolder, [vim.VirtualMachine], True)
         for vm in inventory.view:
-            if isinstance(vm, _VirtualMachineObject) and self._managed_object_id(vm) == str(
+            if isinstance(vm, VsphereVirtualMachineObject) and self._managed_object_id(vm) == str(
                 virtual_machine_id
             ):
                 return vm
         return None
-
-    def _to_domain(self, vm: _VirtualMachineObject) -> VirtualMachine:
-        """
-        Project vSphere object → Domain VirtualMachine.
-
-        VirtualMachine.power_state reflects backend-observed state.
-        """
-        virtual_machine_id = VirtualMachineId(self._managed_object_id(vm))
-        power_state = str(vm.summary.runtime.powerState)
-        state = {
-            "poweredOn": PowerState.RUNNING,
-            "poweredOff": PowerState.STOPPED,
-        }.get(power_state)
-        if state is None:
-            raise ValueError(f"unsupported power state: {power_state}")
-        return VirtualMachine(virtual_machine_id, str(vm.name), state)
 
     def list_virtual_machines(
         self,
@@ -133,10 +130,10 @@ class VSphereVirtualMachineAdapter:
             )
             vms: list[VirtualMachine] = []
             for vm in inventory.view:
-                if not isinstance(vm, _VirtualMachineObject):
+                if not isinstance(vm, VsphereVirtualMachineObject):
                     continue
                 try:
-                    vms.append(self._to_domain(vm))
+                    vms.append(project_virtual_machine(vm))
                 except ValueError as exc:
                     logger.warning(
                         "Skipping VM %s: %s",
@@ -166,7 +163,7 @@ class VSphereVirtualMachineAdapter:
             vm = self._find(service_instance, virtual_machine_id)
             if vm is None:
                 return Err(VirtualMachineNotFound(virtual_machine_id))
-            return Ok(self._to_domain(vm))
+            return Ok(project_virtual_machine(vm))
         except Exception as exc:
             logger.exception("vSphere VM retrieval failed")
             return Err(VirtualMachineAdapterFailure("get", str(exc)))
