@@ -43,13 +43,18 @@ class VsphereRuntimeInfo(Protocol):
     def powerState(self) -> object: ...
 
 
+class VsphereSummaryInfo(Protocol):
+    @property
+    def runtime(self) -> VsphereRuntimeInfo: ...
+
+
 @runtime_checkable
 class VsphereVirtualMachineObject(Protocol):
     @property
     def name(self) -> str: ...
 
     @property
-    def runtime(self) -> VsphereRuntimeInfo: ...
+    def summary(self) -> VsphereSummaryInfo: ...
 
     def PowerOnVM_Task(self) -> object: ...
 
@@ -57,9 +62,9 @@ class VsphereVirtualMachineObject(Protocol):
 
 
 def project_virtual_machine(vm: VsphereVirtualMachineObject) -> VirtualMachine:
-    """Project a vSphere VM's observed runtime into the Domain entity."""
+    """Project a vSphere VM's observed summary into the Domain entity."""
     virtual_machine_id = VirtualMachineId(str(object.__getattribute__(vm, "_moId")))
-    power_state = str(vm.runtime.powerState)
+    power_state = str(vm.summary.runtime.powerState)
     state = {
         "poweredOn": PowerState.RUNNING,
         "poweredOff": PowerState.STOPPED,
