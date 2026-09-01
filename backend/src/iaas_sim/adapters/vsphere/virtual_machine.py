@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from typing import Final, Protocol, runtime_checkable
 
 from pyVim import connect
-from pyVmomi import vim
+from pyVmomi import vim, vmodl
 
 from iaas_sim.application.operation import (
     BackendOperationFailed,
@@ -38,40 +38,40 @@ class VsphereTaskRef:
     managed_object_reference: str
 
 
-class VsphereRuntimeInfo(Protocol):
-    @property
-    def powerState(self) -> object: ...
-
-
-class VsphereSummaryInfo(Protocol):
-    @property
-    def runtime(self) -> VsphereRuntimeInfo: ...
-
-
 @runtime_checkable
 class VsphereVirtualMachineObject(Protocol):
-    @property
-    def name(self) -> str: ...
-
-    @property
-    def summary(self) -> VsphereSummaryInfo: ...
-
     def PowerOnVM_Task(self) -> object: ...
 
     def PowerOffVM_Task(self) -> object: ...
 
 
-def project_virtual_machine(vm: VsphereVirtualMachineObject) -> VirtualMachine:
-    """Project a vSphere VM's observed summary into the Domain entity."""
-    virtual_machine_id = VirtualMachineId(str(object.__getattribute__(vm, "_moId")))
-    power_state = str(vm.summary.runtime.powerState)
+def project_virtual_machine(
+    virtual_machine_id: VirtualMachineId, name: str, observed_power_state: object
+) -> VirtualMachine:
+    """Project explicitly collected vSphere properties into the Domain entity."""
+    power_state = str(observed_power_state)
     state = {
         "poweredOn": PowerState.RUNNING,
         "poweredOff": PowerState.STOPPED,
     }.get(power_state)
     if state is None:
         raise ValueError(f"unsupported power state: {power_state}")
-    return VirtualMachine(virtual_machine_id, str(vm.name), state)
+    return VirtualMachine(virtual_machine_id, name, state)
+
+
+def virtual_machine_property_filter(
+    vm: VsphereVirtualMachineObject,
+) -> vmodl.query.PropertyCollector.FilterSpec:
+    """Request only the VM properties needed by the control-plane projection."""
+    object_spec = vmodl.query.PropertyCollector.ObjectSpec()
+    object.__setattr__(object_spec, "obj", vm)
+    property_spec = vmodl.query.PropertyCollector.PropertySpec()
+    property_spec.type = vim.VirtualMachine
+    object.__setattr__(property_spec, "pathSet", ["name", "summary.runtime.powerState"])
+    filter_spec = vmodl.query.PropertyCollector.FilterSpec()
+    filter_spec.objectSet = [object_spec]
+    filter_spec.propSet = [property_spec]
+    return filter_spec
 
 
 class VSphereVirtualMachineAdapter:
@@ -97,6 +97,28 @@ class VSphereVirtualMachineAdapter:
             user=os.getenv("VSPHERE_USERNAME", "user"),
             pwd=os.getenv("VSPHERE_PASSWORD", "pass"),
             disableSslCertValidation=True,
+        )
+
+    def _project(
+        self,
+        property_collector: vmodl.query.PropertyCollector,
+        vm: VsphereVirtualMachineObject,
+    ) -> VirtualMachine:
+        filter_spec = virtual_machine_property_filter(vm)
+        contents = property_collector.RetrieveContents([filter_spec])
+        if len(contents) != 1:
+            raise ValueError("VM properties unavailable")
+        properties: dict[str, object] = {
+            dynamic_property.name: dynamic_property.val for dynamic_property in contents[0].propSet
+        }
+        name = properties.get("name")
+        power_state = properties.get("summary.runtime.powerState")
+        if not isinstance(name, str):
+            raise ValueError("VM name unavailable")
+        if power_state is None:
+            raise ValueError("VM power state unavailable")
+        return project_virtual_machine(
+            VirtualMachineId(self._managed_object_id(vm)), name, power_state
         )
 
     def _find(
@@ -133,7 +155,7 @@ class VSphereVirtualMachineAdapter:
                 if not isinstance(vm, VsphereVirtualMachineObject):
                     continue
                 try:
-                    vms.append(project_virtual_machine(vm))
+                    vms.append(self._project(content.propertyCollector, vm))
                 except ValueError as exc:
                     logger.warning(
                         "Skipping VM %s: %s",
@@ -163,7 +185,8 @@ class VSphereVirtualMachineAdapter:
             vm = self._find(service_instance, virtual_machine_id)
             if vm is None:
                 return Err(VirtualMachineNotFound(virtual_machine_id))
-            return Ok(project_virtual_machine(vm))
+            content = service_instance.RetrieveContent()
+            return Ok(self._project(content.propertyCollector, vm))
         except Exception as exc:
             logger.exception("vSphere VM retrieval failed")
             return Err(VirtualMachineAdapterFailure("get", str(exc)))
