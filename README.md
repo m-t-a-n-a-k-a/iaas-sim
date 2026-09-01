@@ -28,10 +28,14 @@ VirtualMachine power commands (start, stop) are modeled as asynchronous operatio
 - **Observed state**: `VirtualMachine.power_state` reflects the last-known backend state, not desired state
 - **Async execution**: `POST /v1/virtualMachines/{id}:start` returns `202 Accepted` with `Location` header
 - **Operation tracking**: Each power command is tracked via an `Operation` resource with UUIDv7 identifier
+  - A process-local registry correlates the public ID with an opaque backend reference; GET polls
+    the backend and projects its current state. The registry is intentionally non-durable in Phase 2A.
 - **Separation of concerns**:
   - Domain validation is pure: command validation against observed state, no side effects
   - Application layer composes domain validation + backend submission
   - Backend Task MOR (vSphere) is internal to Adapter; not exposed as public Operation ID
+  - Operation status is an immutable `Running | Succeeded | Failed(failure)` ADT, and targets use
+    a backend-independent resource reference
 - **Failure semantics**:
   - Synchronous failure (validation/submission): HTTP 4xx/5xx response
   - Asynchronous failure (task execution): `Operation.state = FAILED`

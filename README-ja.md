@@ -28,10 +28,14 @@ VirtualMachine の電源操作（開始、停止）は非同期操作として�
 - **観測状態**: `VirtualMachine.power_state` はバックエンド から最後に観測された状態を表します。希望状態ではありません
 - **非同期実行**: `POST /v1/virtualMachines/{id}:start` は `202 Accepted` と `Location` ヘッダを返します
 - **操作追跡**: 電源操作は `Operation` リソース（UUIDv7 識別子）で追跡されます
+  - process-local registry が公開 ID と opaque な backend reference を対応付け、GET 時に
+    backend の現在状態を poll して投影します。Phase 2A では永続化しません
 - **責務の分離**：
   - ドメイン検証は純粋：観測状態に対するコマンド検証、副作用なし
   - アプリケーション層：ドメイン検証 + バックエンド送信を合成
   - バックエンド Task MOR（vSphere）は Adapter 内部。公開 Operation ID としては公開されません
+  - Operation status は immutable な `Running | Succeeded | Failed(failure)` ADT で、target は
+    backend-independent な resource reference です
 - **失敗セマンティクス**：
   - 同期的失敗（検証・送信失敗）: HTTP 4xx/5xx レスポンス
   - 非同期的失敗（タスク実行失敗）: `Operation.state = FAILED`

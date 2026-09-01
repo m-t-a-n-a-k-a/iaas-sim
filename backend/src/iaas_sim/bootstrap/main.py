@@ -15,6 +15,7 @@ from iaas_sim.adapters.http.virtual_machine import (
     create_operation_router,
     create_virtual_machine_router,
 )
+from iaas_sim.adapters.memory.operation import InMemoryOperationRegistry
 from iaas_sim.adapters.vsphere.health import vcsim_health_check
 from iaas_sim.adapters.vsphere.virtual_machine import VSphereVirtualMachineAdapter
 from iaas_sim.bootstrap.telemetry import configure_app_telemetry
@@ -45,8 +46,10 @@ configure_app_telemetry(app)
 app.include_router(create_health_router({"vcsim": vcsim_health_check}))
 app.include_router(openapi_router)
 app.include_router(ui_router)
-app.include_router(create_virtual_machine_router(VSphereVirtualMachineAdapter()))
-app.include_router(create_operation_router())
+vsphere_adapter = VSphereVirtualMachineAdapter()
+operation_registry = InMemoryOperationRegistry()
+app.include_router(create_virtual_machine_router(vsphere_adapter, operation_registry))
+app.include_router(create_operation_router(operation_registry, vsphere_adapter))
 
 
 @app.get("/", include_in_schema=False)
