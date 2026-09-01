@@ -7,7 +7,6 @@ from iaas_sim.domain.entity.virtual_machine.model import (
     PowerState,
     VirtualMachine,
     VirtualMachineId,
-    transition,
     validate_power_command,
 )
 
@@ -20,6 +19,5 @@ __all__ = [
     "PowerState",
     "VirtualMachine",
     "VirtualMachineId",
-    "transition",
     "validate_power_command",
 ]

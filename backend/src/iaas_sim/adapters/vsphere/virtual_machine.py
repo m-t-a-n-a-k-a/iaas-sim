@@ -3,17 +3,25 @@ from __future__ import annotations
 import logging
 import os
 from collections.abc import Sequence
+from dataclasses import dataclass
 from typing import Final, Protocol, runtime_checkable
 
 from pyVim import connect
 from pyVmomi import vim
 
+from iaas_sim.application.operation import (
+    BackendOperationFailed,
+    BackendOperationRef,
+    BackendOperationRunning,
+    BackendOperationStatus,
+    BackendOperationSucceeded,
+    OperationPollingFailure,
+)
 from iaas_sim.application.virtual_machine import (
     PowerCommandSubmissionFailure,
     VirtualMachineAdapterFailure,
     VirtualMachineNotFound,
 )
-from iaas_sim.domain.entity.operation import VsphereTaskRef
 from iaas_sim.domain.entity.virtual_machine import (
     PowerCommand,
     PowerState,
@@ -25,22 +33,45 @@ from iaas_sim.result import Err, Ok, Result
 logger: Final[logging.Logger] = logging.getLogger("iaas_sim.adapters.vsphere")
 
 
-class _RuntimeInfo(Protocol):
-    powerState: object
+@dataclass(frozen=True, slots=True)
+class VsphereTaskRef:
+    managed_object_reference: str
 
 
-class _SummaryInfo(Protocol):
-    runtime: _RuntimeInfo
+class VsphereRuntimeInfo(Protocol):
+    @property
+    def powerState(self) -> object: ...
+
+
+class VsphereSummaryInfo(Protocol):
+    @property
+    def runtime(self) -> VsphereRuntimeInfo: ...
 
 
 @runtime_checkable
-class _VirtualMachineObject(Protocol):
-    name: str
-    summary: _SummaryInfo
+class VsphereVirtualMachineObject(Protocol):
+    @property
+    def name(self) -> str: ...
+
+    @property
+    def summary(self) -> VsphereSummaryInfo: ...
 
     def PowerOnVM_Task(self) -> object: ...
 
     def PowerOffVM_Task(self) -> object: ...
+
+
+def project_virtual_machine(vm: VsphereVirtualMachineObject) -> VirtualMachine:
+    """Project a vSphere VM's observed summary into the Domain entity."""
+    virtual_machine_id = VirtualMachineId(str(object.__getattribute__(vm, "_moId")))
+    power_state = str(vm.summary.runtime.powerState)
+    state = {
+        "poweredOn": PowerState.RUNNING,
+        "poweredOff": PowerState.STOPPED,
+    }.get(power_state)
+    if state is None:
+        raise ValueError(f"unsupported power state: {power_state}")
+    return VirtualMachine(virtual_machine_id, str(vm.name), state)
 
 
 class VSphereVirtualMachineAdapter:
@@ -55,7 +86,7 @@ class VSphereVirtualMachineAdapter:
     """
 
     @staticmethod
-    def _managed_object_id(vm: _VirtualMachineObject) -> str:
+    def _managed_object_id(vm: VsphereVirtualMachineObject) -> str:
         return str(object.__getattribute__(vm, "_moId"))
 
     def _connect(self) -> vim.ServiceInstance:
@@ -70,53 +101,27 @@ class VSphereVirtualMachineAdapter:
 
     def _find(
         self, service_instance: vim.ServiceInstance, virtual_machine_id: VirtualMachineId
-    ) -> _VirtualMachineObject | None:
+    ) -> VsphereVirtualMachineObject | None:
         content = service_instance.RetrieveContent()
         view_manager = content.viewManager
         if view_manager is None:
             return None
         inventory = view_manager.CreateContainerView(content.rootFolder, [vim.VirtualMachine], True)
         for vm in inventory.view:
-            if isinstance(vm, _VirtualMachineObject) and self._managed_object_id(vm) == str(
+            if isinstance(vm, VsphereVirtualMachineObject) and self._managed_object_id(vm) == str(
                 virtual_machine_id
             ):
                 return vm
         return None
-
-    def _to_domain(self, vm: _VirtualMachineObject) -> VirtualMachine:
-        """
-        Project vSphere object → Domain VirtualMachine.
-
-        VirtualMachine.power_state reflects backend-observed state.
-        """
-        virtual_machine_id = VirtualMachineId(self._managed_object_id(vm))
-        try:
-            # Try to get power state from vm.runtime.powerState
-            # (summary may not be available in all backends like vcsim)
-            runtime = getattr(vm, "runtime", None)
-            if runtime is None:
-                raise ValueError("vm.runtime is not available")
-            power_state_obj = getattr(runtime, "powerState", None)
-            if power_state_obj is None:
-                raise ValueError("vm.runtime.powerState is not available")
-            power_state_str = str(power_state_obj)
-            state = {
-                "poweredOn": PowerState.RUNNING,
-                "poweredOff": PowerState.STOPPED,
-            }.get(power_state_str)
-            if state is None:
-                raise ValueError(f"unsupported power state: {power_state_str}")
-        except (AttributeError, ValueError) as exc:
-            raise ValueError(f"failed to extract power state from vm: {exc}") from exc
-        return VirtualMachine(virtual_machine_id, str(vm.name), state)
 
     def list_virtual_machines(
         self,
     ) -> Result[Sequence[VirtualMachine], VirtualMachineAdapterFailure]:
         service_instance: vim.ServiceInstance | None = None
         try:
-            service_instance = self._connect()
-            content = service_instance.RetrieveContent()
+            connected = self._connect()
+            service_instance = connected
+            content = connected.RetrieveContent()
             view_manager = content.viewManager
             if view_manager is None:
                 return Err(VirtualMachineAdapterFailure("list", "view manager unavailable"))
@@ -125,10 +130,10 @@ class VSphereVirtualMachineAdapter:
             )
             vms: list[VirtualMachine] = []
             for vm in inventory.view:
-                if not isinstance(vm, _VirtualMachineObject):
+                if not isinstance(vm, VsphereVirtualMachineObject):
                     continue
                 try:
-                    vms.append(self._to_domain(vm))
+                    vms.append(project_virtual_machine(vm))
                 except ValueError as exc:
                     logger.warning(
                         "Skipping VM %s: %s",
@@ -158,7 +163,7 @@ class VSphereVirtualMachineAdapter:
             vm = self._find(service_instance, virtual_machine_id)
             if vm is None:
                 return Err(VirtualMachineNotFound(virtual_machine_id))
-            return Ok(self._to_domain(vm))
+            return Ok(project_virtual_machine(vm))
         except Exception as exc:
             logger.exception("vSphere VM retrieval failed")
             return Err(VirtualMachineAdapterFailure("get", str(exc)))
@@ -171,12 +176,12 @@ class VSphereVirtualMachineAdapter:
 
     def submit_power_command(
         self, virtual_machine_id: VirtualMachineId, command: PowerCommand
-    ) -> Result[VsphereTaskRef, PowerCommandSubmissionFailure]:
+    ) -> Result[BackendOperationRef, PowerCommandSubmissionFailure]:
         """
         Submit async power command to vSphere backend.
 
         Returns:
-            Ok(VsphereTaskRef): Task created, tracked for async completion
+            Ok(BackendOperationRef): opaque backend operation reference
             Err(PowerCommandSubmissionFailure): submission failed
 
         Does not block on Task completion.
@@ -194,11 +199,41 @@ class VSphereVirtualMachineAdapter:
 
             # Extract Task MOR for internal tracking
             task_mor = str(object.__getattribute__(task, "_moId"))
-            return Ok(VsphereTaskRef(task_mor))
+            task_ref = VsphereTaskRef(task_mor)
+            return Ok(BackendOperationRef(task_ref.managed_object_reference))
 
         except Exception as exc:
             logger.exception("vSphere power command submission failed")
             return Err(PowerCommandSubmissionFailure(virtual_machine_id, str(exc)))
+        finally:
+            if service_instance is not None:
+                try:
+                    connect.Disconnect(service_instance)
+                except Exception:
+                    logger.exception("vSphere disconnect failed")
+
+    def get_operation_status(
+        self, backend_ref: BackendOperationRef
+    ) -> Result[BackendOperationStatus, OperationPollingFailure]:
+        service_instance: vim.ServiceInstance | None = None
+        try:
+            connected = self._connect()
+            service_instance = connected
+            task_ref = VsphereTaskRef(str(backend_ref))
+            task = vim.Task(task_ref.managed_object_reference, connected._stub)
+            state = str(task.info.state)
+            if state in ("queued", "running"):
+                return Ok(BackendOperationRunning())
+            if state == "success":
+                return Ok(BackendOperationSucceeded())
+            if state == "error":
+                error = task.info.error
+                reason = str(error) if error is not None else "backend task failed"
+                return Ok(BackendOperationFailed(reason))
+            return Err(OperationPollingFailure(f"unsupported backend task state: {state}"))
+        except Exception as exc:
+            logger.exception("vSphere task polling failed")
+            return Err(OperationPollingFailure(str(exc)))
         finally:
             if service_instance is not None:
                 try:

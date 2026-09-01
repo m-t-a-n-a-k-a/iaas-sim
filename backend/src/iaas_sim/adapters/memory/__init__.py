@@ -1,0 +1,1 @@
+"""Process-local infrastructure adapters."""

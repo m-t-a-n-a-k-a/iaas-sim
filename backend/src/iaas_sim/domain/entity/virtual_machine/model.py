@@ -75,20 +75,6 @@ class VirtualMachine:
     power_state: PowerState
 
 
-# State-command decision table for validation
-_VALID_COMMANDS: dict[tuple[PowerState, PowerCommand], bool] = {
-    (PowerState.STOPPED, PowerCommand.START): True,
-    (PowerState.RUNNING, PowerCommand.STOP): True,
-    (PowerState.RUNNING, PowerCommand.START): False,
-    (PowerState.STOPPED, PowerCommand.STOP): False,
-}
-
-_ERROR_TYPES: dict[tuple[PowerState, PowerCommand], type[AlreadyRunning] | type[AlreadyStopped]] = {
-    (PowerState.RUNNING, PowerCommand.START): AlreadyRunning,
-    (PowerState.STOPPED, PowerCommand.STOP): AlreadyStopped,
-}
-
-
 def validate_power_command(
     vm: VirtualMachine,
     command: PowerCommand,
@@ -103,33 +89,12 @@ def validate_power_command(
 
     Railway: validation errors are expected failures, propagated as Err.
     """
-    key = (vm.power_state, command)
-    if _VALID_COMMANDS.get(key, False):
-        return Ok(AcceptedPowerCommand(vm.id, command))
-
-    error_type = _ERROR_TYPES.get(key)
-    if error_type is AlreadyRunning:
-        return Err(AlreadyRunning(vm.id))
-    if error_type is AlreadyStopped:
-        return Err(AlreadyStopped(vm.id))
-    # Unreachable: state space is fully covered
-    return Err(AlreadyStopped(vm.id))
-
-
-# Deprecated: old transition() API kept for backwards compatibility during migration
-def transition(
-    vm: VirtualMachine,
-    command: PowerCommand,
-) -> Result[VirtualMachine, PowerCommandError]:
-    """
-    DEPRECATED: Use validate_power_command() instead.
-
-    Old semantics mutated VM state immediately, violating observed-state invariant.
-    This function is retained temporarily for test migration.
-    """
-    result = validate_power_command(vm, command)
-    if isinstance(result, Err):
-        return Err(result.error)
-    # Note: Old behavior would have mutated state here.
-    # New architecture does not mutate VM in response to command.
-    return Ok(vm)
+    match vm.power_state, command:
+        case PowerState.STOPPED, PowerCommand.START:
+            return Ok(AcceptedPowerCommand(vm.id, command))
+        case PowerState.RUNNING, PowerCommand.STOP:
+            return Ok(AcceptedPowerCommand(vm.id, command))
+        case PowerState.RUNNING, PowerCommand.START:
+            return Err(AlreadyRunning(vm.id))
+        case PowerState.STOPPED, PowerCommand.STOP:
+            return Err(AlreadyStopped(vm.id))

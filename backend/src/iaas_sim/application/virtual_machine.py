@@ -4,7 +4,12 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Protocol
 
-from iaas_sim.domain.entity.operation import Operation, OperationId, OperationState, VsphereTaskRef
+from iaas_sim.application.operation import (
+    BackendOperationRef,
+    OperationRegistryPort,
+    TrackedOperation,
+)
+from iaas_sim.domain.entity.operation import Operation, OperationId, ResourceReference, Running
 from iaas_sim.domain.entity.virtual_machine import (
     PowerCommand,
     PowerCommandError,
@@ -70,7 +75,7 @@ class VirtualMachinePort(Protocol):
 
     def submit_power_command(
         self, virtual_machine_id: VirtualMachineId, command: PowerCommand
-    ) -> Result[VsphereTaskRef, PowerCommandSubmissionFailure]: ...
+    ) -> Result[BackendOperationRef, PowerCommandSubmissionFailure]: ...
 
 
 def list_virtual_machines(
@@ -91,6 +96,7 @@ def get_virtual_machine(
 
 def execute_power_command(
     port: VirtualMachinePort,
+    registry: OperationRegistryPort,
     operation_id: OperationId,
     virtual_machine_id: VirtualMachineId,
     command: PowerCommand,
@@ -122,27 +128,33 @@ def execute_power_command(
         return Err[ApplicationError](submitted.error)
 
     # Step 4: Create Operation resource
-    operation = Operation(
+    tracked = TrackedOperation(
         id=operation_id,
-        target_virtual_machine_id=virtual_machine_id,
+        target=ResourceReference("virtualMachines", str(virtual_machine_id)),
         action=command.value,
-        state=OperationState.RUNNING,
-        failure=None,
+        backend_ref=submitted.value,
     )
-    return Ok(operation)
+    registry.add(tracked)
+    return Ok(Operation(tracked.id, tracked.target, tracked.action, Running()))
 
 
 def start_virtual_machine(
     port: VirtualMachinePort,
+    registry: OperationRegistryPort,
     operation_id: OperationId,
     virtual_machine_id: VirtualMachineId,
 ) -> Result[Operation, ApplicationError]:
-    return execute_power_command(port, operation_id, virtual_machine_id, PowerCommand.START)
+    return execute_power_command(
+        port, registry, operation_id, virtual_machine_id, PowerCommand.START
+    )
 
 
 def stop_virtual_machine(
     port: VirtualMachinePort,
+    registry: OperationRegistryPort,
     operation_id: OperationId,
     virtual_machine_id: VirtualMachineId,
 ) -> Result[Operation, ApplicationError]:
-    return execute_power_command(port, operation_id, virtual_machine_id, PowerCommand.STOP)
+    return execute_power_command(
+        port, registry, operation_id, virtual_machine_id, PowerCommand.STOP
+    )
