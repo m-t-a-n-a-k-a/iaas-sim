@@ -237,7 +237,7 @@ class VSphereVirtualMachineAdapter:
                 return Ok(BackendOperationSucceeded())
             if state == "error":
                 error = task.info.error
-                reason = str(error.localizedMessage) if error is not None else "backend task failed"
+                reason = str(error) if error is not None else "backend task failed"
                 return Ok(BackendOperationFailed(reason))
             return Err(OperationPollingFailure(f"unsupported backend task state: {state}"))
         except Exception as exc:
