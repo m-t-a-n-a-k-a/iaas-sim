@@ -90,17 +90,25 @@ class VSphereVirtualMachineAdapter:
         VirtualMachine.power_state reflects backend-observed state.
         """
         virtual_machine_id = VirtualMachineId(self._managed_object_id(vm))
-        power_state_str: str | None = None
         try:
-            power_state_str = str(vm.summary.runtime.powerState)
+            summary = getattr(vm, "summary", None)
+            if summary is None:
+                raise ValueError("vm.summary is not available")
+            runtime = getattr(summary, "runtime", None)
+            if runtime is None:
+                raise ValueError("vm.summary.runtime is not available")
+            power_state_obj = getattr(runtime, "powerState", None)
+            if power_state_obj is None:
+                raise ValueError("vm.summary.runtime.powerState is not available")
+            power_state_str = str(power_state_obj)
             state = {
                 "poweredOn": PowerState.RUNNING,
                 "poweredOff": PowerState.STOPPED,
             }.get(power_state_str)
-        except AttributeError:
-            state = None
-        if state is None:
-            raise ValueError(f"unsupported power state: {power_state_str}")
+            if state is None:
+                raise ValueError(f"unsupported power state: {power_state_str}")
+        except (AttributeError, ValueError) as exc:
+            raise ValueError(f"failed to extract power state from vm: {exc}") from exc
         return VirtualMachine(virtual_machine_id, str(vm.name), state)
 
     def list_virtual_machines(
