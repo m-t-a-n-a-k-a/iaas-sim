@@ -1,18 +1,18 @@
 {
   "name": "iaas-sim",
-  "image": "mcr.microsoft.com/devcontainers/python:1-3.13-bookworm",
+  "image": "mcr.microsoft.com/devcontainers/python:1-3.14-bookworm",
   "features": {
     "ghcr.io/devcontainers/features/node:1": {
       "version": "24"
     },
     "ghcr.io/devcontainers/features/docker-in-docker:2": {}
   },
-  "postCreateCommand": "cd /workspaces/iaas-sim && python3 -m pip install --user uv && ~/.local/bin/uv python install 3.13",
+  "postCreateCommand": "cd /workspaces/iaas-sim && python3 -m pip install --user uv && ~/.local/bin/uv python install 3.14",
   "forwardPorts": [8000, 3000, 4317, 4318, 5556],
   "customizations": {
     "vscode": {
       "settings": {
-        "python.defaultInterpreterPath": "/home/vscode/.local/bin/python3.13"
+        "python.defaultInterpreterPath": "/home/vscode/.local/bin/python3.14"
       }
     }
   }

@@ -1,13 +1,14 @@
 import pytest
 
 from iaas_sim.domain.entity.virtual_machine import (
+    AcceptedPowerCommand,
     AlreadyRunning,
     AlreadyStopped,
     PowerCommand,
     PowerState,
     VirtualMachine,
     VirtualMachineId,
-    transition,
+    validate_power_command,
 )
 from iaas_sim.result import Err, Ok
 
@@ -16,33 +17,54 @@ from iaas_sim.result import Err, Ok
     ("state", "command", "expected"),
     [
         pytest.param(
-            PowerState.STOPPED, PowerCommand.START, PowerState.RUNNING, id="stopped-starts"
+            PowerState.STOPPED,
+            PowerCommand.START,
+            AcceptedPowerCommand(VirtualMachineId("vm-1"), PowerCommand.START),
+            id="stopped-start-accepted",
         ),
-        pytest.param(PowerState.RUNNING, PowerCommand.STOP, PowerState.STOPPED, id="running-stops"),
+        pytest.param(
+            PowerState.RUNNING,
+            PowerCommand.STOP,
+            AcceptedPowerCommand(VirtualMachineId("vm-1"), PowerCommand.STOP),
+            id="running-stop-accepted",
+        ),
         pytest.param(
             PowerState.RUNNING,
             PowerCommand.START,
-            AlreadyRunning,
+            AlreadyRunning(VirtualMachineId("vm-1")),
             id="running-start-rejected",
         ),
         pytest.param(
             PowerState.STOPPED,
             PowerCommand.STOP,
-            AlreadyStopped,
+            AlreadyStopped(VirtualMachineId("vm-1")),
             id="stopped-stop-rejected",
         ),
     ],
 )
-def test_transition_table(
+def test_validate_power_command_table(
     state: PowerState,
     command: PowerCommand,
-    expected: PowerState | type[AlreadyRunning] | type[AlreadyStopped],
+    expected: AcceptedPowerCommand | AlreadyRunning | AlreadyStopped,
 ) -> None:
+    """
+    Pure domain validation: test all state x command combinations.
+
+    Expected behavior:
+    - STOPPED + START -> Ok(accepted)
+    - RUNNING + STOP -> Ok(accepted)
+    - RUNNING + START -> Err(AlreadyRunning)
+    - STOPPED + STOP -> Err(AlreadyStopped)
+
+    Note: VM power state is NOT mutated by validation.
+    """
     vm = VirtualMachine(VirtualMachineId("vm-1"), "demo", state)
-    result = transition(vm, command)
-    if isinstance(expected, PowerState):
+    result = validate_power_command(vm, command)
+    if isinstance(expected, AcceptedPowerCommand):
         assert isinstance(result, Ok)
-        assert result.value.power_state is expected
-    elif expected in (AlreadyRunning, AlreadyStopped):
+        assert result.value == expected
+        # Verify VM remains unchanged
+        assert vm.power_state is state
+    else:
         assert isinstance(result, Err)
-        assert isinstance(result.error, expected)
+        assert result.error == expected

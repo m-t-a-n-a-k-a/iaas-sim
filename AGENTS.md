@@ -59,6 +59,20 @@ Future design notes:
 - Metering and OpenTelemetry metrics are separate concerns
 - Long-running operations are modeled later as asynchronous command + Operation Resource, not implemented in Phase 1
 
+Phase 2A: Asynchronous Power Operations
+
+- VirtualMachine.power_state represents **observed backend state**, not desired state
+- Power operations (START, STOP) are asynchronous via vSphere PowerOnVM_Task / PowerOffVM_Task
+- Domain validation (validate_power_command) is pure: checks command validity against observed state, no side effects
+- Operation entity tracks async execution: OperationId (UUIDv7) is control-plane identity, distinct from backend Task MOR
+- Command acceptance (HTTP 202 Accepted) ≠ command completion
+  - Synchronous failure: validation error or submission failure → HTTP 4xx/5xx
+  - Asynchronous failure: Task execution failure → Operation.state = FAILED
+- No concurrent power operations policy yet (collect requirements first)
+- Backend Task identity (vSphere MOR) is Adapter-internal; public API uses Operation.id only
+- No transitional power states (POWERING_ON/OFF); Operation.state tracks execution
+- Phase 2A does not persist Operations; backend task state is polled on GET /operations/{id}
+
 Result / Railway policy:
 
 - Use a project-local Ok / Err / Result primitive; do not add external FP libraries.

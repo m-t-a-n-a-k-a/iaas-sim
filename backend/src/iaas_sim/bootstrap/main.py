@@ -11,7 +11,10 @@ from fastapi.responses import RedirectResponse
 from iaas_sim.adapters.http.health import create_health_router
 from iaas_sim.adapters.http.openapi import openapi_router
 from iaas_sim.adapters.http.ui import ui_router
-from iaas_sim.adapters.http.virtual_machine import create_virtual_machine_router
+from iaas_sim.adapters.http.virtual_machine import (
+    create_operation_router,
+    create_virtual_machine_router,
+)
 from iaas_sim.adapters.vsphere.health import vcsim_health_check
 from iaas_sim.adapters.vsphere.virtual_machine import VSphereVirtualMachineAdapter
 from iaas_sim.bootstrap.telemetry import configure_app_telemetry
@@ -43,6 +46,7 @@ app.include_router(create_health_router({"vcsim": vcsim_health_check}))
 app.include_router(openapi_router)
 app.include_router(ui_router)
 app.include_router(create_virtual_machine_router(VSphereVirtualMachineAdapter()))
+app.include_router(create_operation_router())
 
 
 @app.get("/", include_in_schema=False)

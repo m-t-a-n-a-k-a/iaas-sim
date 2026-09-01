@@ -11,7 +11,7 @@ A minimal IaaS cloud simulator for learning, design validation, and architecture
 
 ## Stack
 
-- Python 3.13
+- Python 3.14
 - FastAPI
 - Uvicorn
 - pyVmomi
@@ -20,6 +20,21 @@ A minimal IaaS cloud simulator for learning, design validation, and architecture
 - Dex for future OIDC integration
 - OpenTelemetry + Grafana/otel-lgtm
 - Docker Compose
+
+## Phase 2A: Asynchronous Power Operations
+
+VirtualMachine power commands (start, stop) are modeled as asynchronous operations:
+
+- **Observed state**: `VirtualMachine.power_state` reflects the last-known backend state, not desired state
+- **Async execution**: `POST /v1/virtualMachines/{id}:start` returns `202 Accepted` with `Location` header
+- **Operation tracking**: Each power command is tracked via an `Operation` resource with UUIDv7 identifier
+- **Separation of concerns**:
+  - Domain validation is pure: command validation against observed state, no side effects
+  - Application layer composes domain validation + backend submission
+  - Backend Task MOR (vSphere) is internal to Adapter; not exposed as public Operation ID
+- **Failure semantics**:
+  - Synchronous failure (validation/submission): HTTP 4xx/5xx response
+  - Asynchronous failure (task execution): `Operation.state = FAILED`
 
 ## Codespaces
 

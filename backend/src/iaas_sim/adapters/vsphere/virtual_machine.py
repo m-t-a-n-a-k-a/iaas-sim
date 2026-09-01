@@ -9,11 +9,17 @@ from pyVim import connect
 from pyVmomi import vim
 
 from iaas_sim.application.virtual_machine import (
+    PowerCommandSubmissionFailure,
     VirtualMachineAdapterFailure,
     VirtualMachineNotFound,
-    VirtualMachineOperationFailure,
 )
-from iaas_sim.domain.entity.virtual_machine import PowerState, VirtualMachine, VirtualMachineId
+from iaas_sim.domain.entity.operation import VsphereTaskRef
+from iaas_sim.domain.entity.virtual_machine import (
+    PowerCommand,
+    PowerState,
+    VirtualMachine,
+    VirtualMachineId,
+)
 from iaas_sim.result import Err, Ok, Result
 
 logger: Final[logging.Logger] = logging.getLogger("iaas_sim.adapters.vsphere")
@@ -38,8 +44,15 @@ class _VirtualMachineObject(Protocol):
 
 
 class VSphereVirtualMachineAdapter:
-    def __init__(self) -> None:
-        self._power_states: dict[VirtualMachineId, PowerState] = {}
+    """
+    vSphere Adapter: control-plane ↔ backend translation.
+
+    Invariants:
+    - Does NOT maintain shadow state of VM power_state
+    - Does NOT mutate domain VirtualMachine
+    - submit_power_command() returns Task reference for Adapter-internal tracking
+    - Backend Task identity (MOR) is NOT exposed as public Operation ID
+    """
 
     @staticmethod
     def _managed_object_id(vm: _VirtualMachineObject) -> str:
@@ -71,6 +84,11 @@ class VSphereVirtualMachineAdapter:
         return None
 
     def _to_domain(self, vm: _VirtualMachineObject) -> VirtualMachine:
+        """
+        Project vSphere object → Domain VirtualMachine.
+
+        VirtualMachine.power_state reflects backend-observed state.
+        """
         virtual_machine_id = VirtualMachineId(self._managed_object_id(vm))
         try:
             state = {
@@ -78,10 +96,9 @@ class VSphereVirtualMachineAdapter:
                 "poweredOff": PowerState.STOPPED,
             }.get(str(vm.summary.runtime.powerState))
         except AttributeError:
-            state = self._power_states.get(virtual_machine_id, PowerState.STOPPED)
+            state = None
         if state is None:
             raise ValueError(f"unsupported power state: {vm.summary.runtime.powerState}")
-        self._power_states[virtual_machine_id] = state
         return VirtualMachine(virtual_machine_id, str(vm.name), state)
 
     def list_virtual_machines(
@@ -137,40 +154,39 @@ class VSphereVirtualMachineAdapter:
                 except Exception:
                     logger.exception("vSphere disconnect failed")
 
-    def _power(
-        self, virtual_machine_id: VirtualMachineId, operation: str
-    ) -> Result[None, VirtualMachineOperationFailure]:
+    def submit_power_command(
+        self, virtual_machine_id: VirtualMachineId, command: PowerCommand
+    ) -> Result[VsphereTaskRef, PowerCommandSubmissionFailure]:
+        """
+        Submit async power command to vSphere backend.
+
+        Returns:
+            Ok(VsphereTaskRef): Task created, tracked for async completion
+            Err(PowerCommandSubmissionFailure): submission failed
+
+        Does not block on Task completion.
+        Backend Task MOR is not exposed as public Operation ID.
+        """
         service_instance: vim.ServiceInstance | None = None
         try:
             service_instance = self._connect()
             vm = self._find(service_instance, virtual_machine_id)
             if vm is None:
-                return Err(
-                    VirtualMachineOperationFailure(virtual_machine_id, operation, "not found")
-                )
-            if operation == "start":
-                vm.PowerOnVM_Task()
-                self._power_states[virtual_machine_id] = PowerState.RUNNING
-            else:
-                vm.PowerOffVM_Task()
-                self._power_states[virtual_machine_id] = PowerState.STOPPED
-            return Ok(None)
+                return Err(PowerCommandSubmissionFailure(virtual_machine_id, "not found"))
+
+            # Submit async task
+            task = vm.PowerOnVM_Task() if command is PowerCommand.START else vm.PowerOffVM_Task()
+
+            # Extract Task MOR for internal tracking
+            task_mor = str(object.__getattribute__(task, "_moId"))
+            return Ok(VsphereTaskRef(task_mor))
+
         except Exception as exc:
-            logger.exception("vSphere VM power operation failed")
-            return Err(VirtualMachineOperationFailure(virtual_machine_id, operation, str(exc)))
+            logger.exception("vSphere power command submission failed")
+            return Err(PowerCommandSubmissionFailure(virtual_machine_id, str(exc)))
         finally:
             if service_instance is not None:
                 try:
                     connect.Disconnect(service_instance)
                 except Exception:
                     logger.exception("vSphere disconnect failed")
-
-    def power_on(
-        self, virtual_machine_id: VirtualMachineId
-    ) -> Result[None, VirtualMachineOperationFailure]:
-        return self._power(virtual_machine_id, "start")
-
-    def power_off(
-        self, virtual_machine_id: VirtualMachineId
-    ) -> Result[None, VirtualMachineOperationFailure]:
-        return self._power(virtual_machine_id, "stop")
