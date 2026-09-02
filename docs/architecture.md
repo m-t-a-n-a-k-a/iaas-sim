@@ -1,11 +1,11 @@
 # Architecture
 
-The current Phase 2A repository is intentionally small.
+The Phase 2B architecture probe remains intentionally small.
 
 ## Boundary
 
 - Domain: pure logic and immutable state modeling. No I/O and no framework imports.
-- Application: orchestration and port-based use cases for VM queries, power submission, and Operation polling.
+- Application: orchestration and port-based use cases for VM and Snapshot queries, async command submission, and Operation polling.
 - Adapters: concrete HTTP, vSphere, in-memory Operation registry, telemetry, and external integrations.
 - Bootstrap: composition root and dependency wiring.
 
@@ -22,4 +22,4 @@ The current Phase 2A repository is intentionally small.
 - Prefer railway-oriented composition over nested if/else or try/except chains for expected failure propagation.
 - Convert external exceptions only at adapter boundaries into typed Err values; unexpected runtime failures remain handled at the process boundary.
 
-Phase 2A Operations are process-local and non-durable. Persistence, reconciliation, workers, queues, retry, cancellation, and progress are outside this phase.
+Operations remain process-local and non-durable. Snapshot hierarchy is flattened inside the vSphere adapter; the domain and API expose independent top-level Snapshot resources.

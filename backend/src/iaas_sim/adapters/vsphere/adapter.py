@@ -17,17 +17,24 @@ from iaas_sim.application.operation import (
     BackendOperationSucceeded,
     OperationPollingFailure,
 )
+from iaas_sim.application.snapshot import (
+    SnapshotBackendFailure,
+    SnapshotCommandSubmissionFailure,
+    SnapshotNotFound,
+)
 from iaas_sim.application.virtual_machine import (
     PowerCommandSubmissionFailure,
     VirtualMachineBackendFailure,
     VirtualMachineNotFound,
 )
+from iaas_sim.domain.entity.snapshot import Snapshot, SnapshotId
 from iaas_sim.domain.entity.virtual_machine import (
     PowerCommand,
     PowerState,
     VirtualMachine,
     VirtualMachineId,
 )
+from iaas_sim.domain.resource_reference import ResourceReference
 from iaas_sim.result import Err, Ok, Result
 
 logger: Final[logging.Logger] = logging.getLogger("iaas_sim.adapters.vsphere")
@@ -43,6 +50,30 @@ class VsphereVirtualMachineObject(Protocol):
     def PowerOnVM_Task(self) -> object: ...
 
     def PowerOffVM_Task(self) -> object: ...
+
+
+@runtime_checkable
+class VsphereSnapshotVirtualMachine(VsphereVirtualMachineObject, Protocol):
+    snapshot: object
+
+    def CreateSnapshot_Task(
+        self, name: str, description: str, memory: bool, quiesce: bool
+    ) -> object: ...
+
+
+class VsphereSnapshotTree(Protocol):
+    name: str
+    snapshot: object
+    childSnapshotList: Sequence[VsphereSnapshotTree]
+
+
+class VsphereSnapshotInfo(Protocol):
+    rootSnapshotList: Sequence[VsphereSnapshotTree]
+
+
+@runtime_checkable
+class VsphereSnapshotObject(Protocol):
+    def RemoveSnapshot_Task(self, removeChildren: bool, consolidate: bool) -> object: ...
 
 
 class VsphereDynamicProperty(Protocol):
@@ -262,6 +293,141 @@ class VSphereAdapter:
                     connect.Disconnect(service_instance)
                 except Exception:
                     logger.exception("vSphere disconnect failed")
+
+    @staticmethod
+    def _snapshot_id(snapshot_object: object) -> SnapshotId:
+        return SnapshotId(str(object.__getattribute__(snapshot_object, "_moId")))
+
+    def _snapshot_entries(self, vm: VsphereSnapshotVirtualMachine) -> tuple[Snapshot, ...]:
+        snapshot_info = vm.snapshot
+        if snapshot_info is None:
+            return ()
+        roots = object.__getattribute__(snapshot_info, "rootSnapshotList")
+        if not isinstance(roots, Sequence):
+            raise ValueError("snapshot roots unavailable")
+        owner = ResourceReference("virtualMachines", self._managed_object_id(vm))
+        projected: list[Snapshot] = []
+
+        def visit(node: object) -> None:
+            name = object.__getattribute__(node, "name")
+            snapshot_object = object.__getattribute__(node, "snapshot")
+            children = object.__getattribute__(node, "childSnapshotList")
+            if not isinstance(name, str) or not isinstance(children, Sequence):
+                raise ValueError("malformed snapshot tree")
+            projected.append(Snapshot(self._snapshot_id(snapshot_object), name, owner))
+            for child in children:
+                visit(child)
+
+        for root in roots:
+            visit(root)
+        return tuple(projected)
+
+    def list_snapshots(self) -> Result[Sequence[Snapshot], SnapshotBackendFailure]:
+        service_instance: vim.ServiceInstance | None = None
+        try:
+            service_instance = self._connect()
+            content = service_instance.RetrieveContent()
+            view_manager = content.viewManager
+            if view_manager is None:
+                return Err(SnapshotBackendFailure("list", "view manager unavailable"))
+            inventory = view_manager.CreateContainerView(
+                content.rootFolder, [vim.VirtualMachine], True
+            )
+            snapshots: list[Snapshot] = []
+            for vm in inventory.view:
+                if isinstance(vm, VsphereSnapshotVirtualMachine):
+                    snapshots.extend(self._snapshot_entries(vm))
+            return Ok(tuple(snapshots))
+        except Exception as exc:
+            logger.exception("vSphere snapshot listing failed")
+            return Err(SnapshotBackendFailure("list", str(exc)))
+        finally:
+            if service_instance is not None:
+                connect.Disconnect(service_instance)
+
+    def get_snapshot(
+        self, snapshot_id: SnapshotId
+    ) -> Result[Snapshot, SnapshotNotFound | SnapshotBackendFailure]:
+        listed = self.list_snapshots()
+        if isinstance(listed, Err):
+            return Err(listed.error)
+        for snapshot in listed.value:
+            if snapshot.id == snapshot_id:
+                return Ok(snapshot)
+        return Err(SnapshotNotFound(snapshot_id))
+
+    def submit_create_snapshot(
+        self, virtual_machine_id: VirtualMachineId, name: str
+    ) -> Result[BackendOperationRef, SnapshotCommandSubmissionFailure]:
+        service_instance: vim.ServiceInstance | None = None
+        try:
+            service_instance = self._connect()
+            vm = self._find(service_instance, virtual_machine_id)
+            if not isinstance(vm, VsphereSnapshotVirtualMachine):
+                return Err(
+                    SnapshotCommandSubmissionFailure(
+                        "create", str(virtual_machine_id), "virtual machine not found"
+                    )
+                )
+            task = vm.CreateSnapshot_Task(name, "", False, False)
+            return Ok(BackendOperationRef(str(object.__getattribute__(task, "_moId"))))
+        except Exception as exc:
+            logger.exception("vSphere snapshot creation submission failed")
+            return Err(
+                SnapshotCommandSubmissionFailure("create", str(virtual_machine_id), str(exc))
+            )
+        finally:
+            if service_instance is not None:
+                connect.Disconnect(service_instance)
+
+    def _find_snapshot_object(
+        self, service_instance: vim.ServiceInstance, snapshot_id: SnapshotId
+    ) -> VsphereSnapshotObject | None:
+        vm_content = service_instance.RetrieveContent()
+        view_manager = vm_content.viewManager
+        if view_manager is None:
+            return None
+        inventory = view_manager.CreateContainerView(
+            vm_content.rootFolder, [vim.VirtualMachine], True
+        )
+        for vm in inventory.view:
+            if not isinstance(vm, VsphereSnapshotVirtualMachine) or vm.snapshot is None:
+                continue
+            roots = object.__getattribute__(vm.snapshot, "rootSnapshotList")
+            pending: list[object] = list(roots)
+            while pending:
+                node = pending.pop()
+                snapshot_object = object.__getattribute__(node, "snapshot")
+                if self._snapshot_id(snapshot_object) == snapshot_id:
+                    if isinstance(snapshot_object, VsphereSnapshotObject):
+                        return snapshot_object
+                    raise ValueError("snapshot removal API unavailable")
+                pending.extend(object.__getattribute__(node, "childSnapshotList"))
+        return None
+
+    def submit_delete_snapshot(
+        self, snapshot_id: SnapshotId
+    ) -> Result[BackendOperationRef, SnapshotCommandSubmissionFailure]:
+        service_instance: vim.ServiceInstance | None = None
+        try:
+            service_instance = self._connect()
+            snapshot = self._find_snapshot_object(service_instance, snapshot_id)
+            if snapshot is None:
+                return Err(
+                    SnapshotCommandSubmissionFailure(
+                        "delete", str(snapshot_id), "snapshot not found"
+                    )
+                )
+            # Delete only this snapshot; do not implicitly delete descendants. Consolidation is
+            # requested because removal otherwise leaves snapshot delta files behind.
+            task = snapshot.RemoveSnapshot_Task(removeChildren=False, consolidate=True)
+            return Ok(BackendOperationRef(str(object.__getattribute__(task, "_moId"))))
+        except Exception as exc:
+            logger.exception("vSphere snapshot deletion submission failed")
+            return Err(SnapshotCommandSubmissionFailure("delete", str(snapshot_id), str(exc)))
+        finally:
+            if service_instance is not None:
+                connect.Disconnect(service_instance)
 
     def get_operation_status(
         self, backend_ref: BackendOperationRef

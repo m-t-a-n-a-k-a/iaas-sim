@@ -40,7 +40,7 @@ def _vm_resource(vm: VirtualMachine) -> dict[str, str]:
     return {"id": str(vm.id), "name": vm.name, "powerState": vm.power_state.value}
 
 
-def _operation_resource(operation: Operation) -> dict[str, object]:
+def operation_resource(operation: Operation) -> dict[str, object]:
     match operation.status:
         case Running():
             state, failure = "RUNNING", None
@@ -104,7 +104,7 @@ def create_virtual_machine_router(
                 _raise(error)
             case Ok(operation):
                 return JSONResponse(
-                    content=_operation_resource(operation),
+                    content=operation_resource(operation),
                     status_code=202,
                     headers={"Location": f"/v1/operations/{operation.id.value}"},
                 )
@@ -120,7 +120,7 @@ def create_virtual_machine_router(
                 _raise(error)
             case Ok(operation):
                 return JSONResponse(
-                    content=_operation_resource(operation),
+                    content=operation_resource(operation),
                     status_code=202,
                     headers={"Location": f"/v1/operations/{operation.id.value}"},
                 )
@@ -142,6 +142,6 @@ def create_operation_router(
             if isinstance(result.error, OperationNotFound):
                 raise HTTPException(status_code=404, detail=str(result.error))
             raise HTTPException(status_code=502, detail=str(result.error))
-        return _operation_resource(result.value)
+        return operation_resource(result.value)
 
     return router

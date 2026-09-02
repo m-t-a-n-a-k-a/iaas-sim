@@ -9,7 +9,7 @@ from iaas_sim.application.operation import (
     OperationRegistryPort,
     TrackedOperation,
 )
-from iaas_sim.domain.entity.operation import Operation, OperationId, ResourceReference, Running
+from iaas_sim.domain.entity.operation import Operation, OperationId, Running
 from iaas_sim.domain.entity.virtual_machine import (
     PowerCommand,
     PowerCommandError,
@@ -17,6 +17,7 @@ from iaas_sim.domain.entity.virtual_machine import (
     VirtualMachineId,
     validate_power_command,
 )
+from iaas_sim.domain.resource_reference import ResourceReference
 from iaas_sim.result import Err, Ok, Result, and_then, map
 
 

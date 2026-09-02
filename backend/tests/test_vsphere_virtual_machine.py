@@ -1,6 +1,6 @@
 import pytest
 
-from iaas_sim.adapters.vsphere.virtual_machine import (
+from iaas_sim.adapters.vsphere.adapter import (
     project_virtual_machine,
     virtual_machine_property_filter,
 )
