@@ -26,14 +26,7 @@ class VirtualMachineNotFound:
 
 
 @dataclass(frozen=True, slots=True)
-class VirtualMachineOperationFailure:
-    virtual_machine_id: VirtualMachineId
-    operation: str
-    reason: str
-
-
-@dataclass(frozen=True, slots=True)
-class VirtualMachineAdapterFailure:
+class VirtualMachineBackendFailure:
     operation: str
     reason: str
 
@@ -46,8 +39,7 @@ class PowerCommandSubmissionFailure:
 
 type ApplicationError = (
     VirtualMachineNotFound
-    | VirtualMachineOperationFailure
-    | VirtualMachineAdapterFailure
+    | VirtualMachineBackendFailure
     | PowerCommandError
     | PowerCommandSubmissionFailure
 )
@@ -59,18 +51,18 @@ class VirtualMachinePort(Protocol):
 
     Separation:
     - get_virtual_machine(): returns observed VM state
-    - submit_power_command(): issues async command, returns task reference
+    - submit_power_command(): issues async command, returns a backend operation reference
     """
 
     def list_virtual_machines(
         self,
-    ) -> Result[Sequence[VirtualMachine], VirtualMachineAdapterFailure]: ...
+    ) -> Result[Sequence[VirtualMachine], VirtualMachineBackendFailure]: ...
 
     def get_virtual_machine(
         self, virtual_machine_id: VirtualMachineId
     ) -> Result[
         VirtualMachine,
-        VirtualMachineNotFound | VirtualMachineAdapterFailure,
+        VirtualMachineNotFound | VirtualMachineBackendFailure,
     ]: ...
 
     def submit_power_command(
@@ -80,7 +72,7 @@ class VirtualMachinePort(Protocol):
 
 def list_virtual_machines(
     port: VirtualMachinePort,
-) -> Result[Sequence[VirtualMachine], VirtualMachineAdapterFailure]:
+) -> Result[Sequence[VirtualMachine], VirtualMachineBackendFailure]:
     return port.list_virtual_machines()
 
 

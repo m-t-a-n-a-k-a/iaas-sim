@@ -20,7 +20,7 @@ from iaas_sim.application.operation import (
 )
 from iaas_sim.application.virtual_machine import (
     PowerCommandSubmissionFailure,
-    VirtualMachineAdapterFailure,
+    VirtualMachineBackendFailure,
     VirtualMachineNotFound,
 )
 from iaas_sim.domain.entity.virtual_machine import (
@@ -35,6 +35,7 @@ STATUS_OK = 200
 STATUS_ACCEPTED = 202
 STATUS_NOT_FOUND = 404
 STATUS_CONFLICT = 409
+STATUS_BAD_GATEWAY = 502
 UUID_VERSION_7 = 7
 
 
@@ -42,16 +43,17 @@ class FakePort:
     def __init__(self) -> None:
         self.vm = VirtualMachine(VirtualMachineId("vm-1"), "demo", PowerState.STOPPED)
         self.backend_status: BackendOperationStatus = BackendOperationRunning()
+        self.polling_failure: OperationPollingFailure | None = None
         self.polled: list[BackendOperationRef] = []
 
     def list_virtual_machines(
         self,
-    ) -> Result[Sequence[VirtualMachine], VirtualMachineAdapterFailure]:
+    ) -> Result[Sequence[VirtualMachine], VirtualMachineBackendFailure]:
         return Ok((self.vm,))
 
     def get_virtual_machine(
         self, virtual_machine_id: VirtualMachineId
-    ) -> Result[VirtualMachine, VirtualMachineNotFound | VirtualMachineAdapterFailure]:
+    ) -> Result[VirtualMachine, VirtualMachineNotFound | VirtualMachineBackendFailure]:
         return (
             Ok(self.vm)
             if virtual_machine_id == self.vm.id
@@ -67,6 +69,8 @@ class FakePort:
         self, backend_ref: BackendOperationRef
     ) -> Result[BackendOperationStatus, OperationPollingFailure]:
         self.polled.append(backend_ref)
+        if self.polling_failure is not None:
+            return Err(self.polling_failure)
         return Ok(self.backend_status)
 
 
@@ -110,6 +114,19 @@ def test_unknown_operation_returns_404_without_polling() -> None:
     response = client_for(port).get("/v1/operations/0198f5d0-7300-7000-8000-000000000000")
     assert response.status_code == STATUS_NOT_FOUND
     assert port.polled == []
+
+
+def test_operation_polling_failure_returns_bad_gateway() -> None:
+    port = FakePort()
+    client = client_for(port)
+    submitted = client.post("/v1/virtualMachines/vm-1:start")
+    port.polling_failure = OperationPollingFailure("backend unavailable")
+
+    response = client.get(submitted.headers["Location"])
+
+    assert response.status_code == STATUS_BAD_GATEWAY
+    assert "backend unavailable" in response.json()["detail"]
+    assert port.polled == [BackendOperationRef("task-mock-mor")]
 
 
 def test_validation_error_does_not_submit() -> None:

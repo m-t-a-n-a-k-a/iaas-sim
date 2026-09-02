@@ -28,13 +28,15 @@ from iaas_sim.result import Err, Ok, Result
 
 
 class FakeBackend:
-    def __init__(self, status: BackendOperationStatus) -> None:
+    def __init__(self, status: BackendOperationStatus | OperationPollingFailure) -> None:
         self.status = status
 
     def get_operation_status(
         self, backend_ref: BackendOperationRef
     ) -> Result[BackendOperationStatus, OperationPollingFailure]:
         assert backend_ref == BackendOperationRef("opaque-ref")
+        if isinstance(self.status, OperationPollingFailure):
+            return Err(self.status)
         return Ok(self.status)
 
 
@@ -68,6 +70,22 @@ def test_unknown_operation_is_typed_failure() -> None:
     assert get_operation(
         InMemoryOperationRegistry(), FakeBackend(BackendOperationRunning()), operation_id
     ) == Err(OperationNotFound(operation_id))
+
+
+def test_polling_failure_is_returned_unchanged() -> None:
+    operation_id = OperationId(uuid7())
+    failure = OperationPollingFailure("backend unavailable")
+    registry = InMemoryOperationRegistry()
+    registry.add(
+        TrackedOperation(
+            operation_id,
+            ResourceReference("virtualMachines", "vm-1"),
+            "START",
+            BackendOperationRef("opaque-ref"),
+        )
+    )
+
+    assert get_operation(registry, FakeBackend(failure), operation_id) == Err(failure)
 
 
 def test_operation_status_constructors_only_allow_valid_shapes() -> None:
