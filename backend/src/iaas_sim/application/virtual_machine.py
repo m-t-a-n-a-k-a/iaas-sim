@@ -110,7 +110,10 @@ def execute_power_command(
     )
     submitted = and_then(
         validated,
-        lambda _virtual_machine: port.submit_power_command(virtual_machine_id, command),
+        lambda accepted: port.submit_power_command(
+            accepted.virtual_machine_id,
+            accepted.command,
+        ),
     )
     tracked = map(
         submitted,
