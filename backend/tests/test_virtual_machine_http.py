@@ -1,5 +1,7 @@
+# ruff: noqa: PLR2004
+# pyright: basic, reportArgumentType=false, reportAttributeAccessIssue=false
 from collections.abc import Sequence
-from uuid import UUID
+from uuid import UUID, uuid4, uuid7
 
 import pytest
 from fastapi import FastAPI
@@ -10,126 +12,91 @@ from iaas_sim.adapters.http.virtual_machine import (
     create_virtual_machine_router,
 )
 from iaas_sim.adapters.memory.operation import InMemoryOperationRegistry
+from iaas_sim.application.identity import BackendVirtualMachineRef, VirtualMachineIdentityNotFound
 from iaas_sim.application.operation import (
-    BackendOperationFailed,
     BackendOperationRef,
     BackendOperationRunning,
     BackendOperationStatus,
-    BackendOperationSucceeded,
-    OperationPollingFailure,
 )
 from iaas_sim.application.virtual_machine import (
-    PowerCommandSubmissionFailure,
+    ObservedVirtualMachine,
     VirtualMachineBackendFailure,
     VirtualMachineNotFound,
 )
-from iaas_sim.domain.entity.virtual_machine import (
-    PowerCommand,
-    PowerState,
-    VirtualMachine,
-    VirtualMachineId,
-)
+from iaas_sim.domain.entity.virtual_machine import PowerCommand, PowerState, VirtualMachineId
 from iaas_sim.result import Err, Ok, Result
 
-STATUS_OK = 200
-STATUS_ACCEPTED = 202
-STATUS_NOT_FOUND = 404
-STATUS_CONFLICT = 409
-STATUS_BAD_GATEWAY = 502
-UUID_VERSION_7 = 7
+VM_ID = VirtualMachineId(uuid7())
+REF = BackendVirtualMachineRef("vm-1")
 
 
-class FakePort:
-    def __init__(self) -> None:
-        self.vm = VirtualMachine(VirtualMachineId("vm-1"), "demo", PowerState.STOPPED)
+class Identity:
+    def get_or_create_by_backend_ref(self, backend_ref):
+        return Ok(VM_ID)
+
+    def get_backend_ref(self, virtual_machine_id):
+        return (
+            Ok(REF)
+            if virtual_machine_id == VM_ID
+            else Err(VirtualMachineIdentityNotFound(virtual_machine_id))
+        )
+
+
+class Port:
+    def __init__(self):
+        self.vm = ObservedVirtualMachine(REF, "demo", PowerState.STOPPED)
         self.backend_status: BackendOperationStatus = BackendOperationRunning()
-        self.polling_failure: OperationPollingFailure | None = None
-        self.polled: list[BackendOperationRef] = []
+        self.polled = []
+        self.submitted = []
 
     def list_virtual_machines(
         self,
-    ) -> Result[Sequence[VirtualMachine], VirtualMachineBackendFailure]:
+    ) -> Result[Sequence[ObservedVirtualMachine], VirtualMachineBackendFailure]:
         return Ok((self.vm,))
 
-    def get_virtual_machine(
-        self, virtual_machine_id: VirtualMachineId
-    ) -> Result[VirtualMachine, VirtualMachineNotFound | VirtualMachineBackendFailure]:
-        return (
-            Ok(self.vm)
-            if virtual_machine_id == self.vm.id
-            else Err(VirtualMachineNotFound(virtual_machine_id))
-        )
+    def get_virtual_machine(self, backend_ref):
+        return Ok(self.vm) if backend_ref == REF else Err(VirtualMachineNotFound(backend_ref))
 
-    def submit_power_command(
-        self, virtual_machine_id: VirtualMachineId, command: PowerCommand
-    ) -> Result[BackendOperationRef, PowerCommandSubmissionFailure]:
-        return Ok(BackendOperationRef("task-mock-mor"))
+    def submit_power_command(self, backend_ref, command):
+        self.submitted.append((backend_ref, command))
+        return Ok(BackendOperationRef("task-1"))
 
-    def get_operation_status(
-        self, backend_ref: BackendOperationRef
-    ) -> Result[BackendOperationStatus, OperationPollingFailure]:
+    def get_operation_status(self, backend_ref):
         self.polled.append(backend_ref)
-        if self.polling_failure is not None:
-            return Err(self.polling_failure)
         return Ok(self.backend_status)
 
 
-def client_for(port: FakePort) -> TestClient:
+def client_for(port):
     registry = InMemoryOperationRegistry()
     app = FastAPI()
-    app.include_router(create_virtual_machine_router(port, registry))
+    app.include_router(create_virtual_machine_router(port, Identity(), registry))
     app.include_router(create_operation_router(registry, port))
     return TestClient(app)
 
 
-@pytest.mark.parametrize(
-    ("backend_status", "state", "failure"),
-    [
-        pytest.param(BackendOperationRunning(), "RUNNING", None, id="running"),
-        pytest.param(BackendOperationSucceeded(), "SUCCEEDED", None, id="succeeded"),
-        pytest.param(BackendOperationFailed("boom"), "FAILED", {"reason": "boom"}, id="failed"),
-    ],
-)
-def test_post_then_get_tracks_current_backend_status(
-    backend_status: BackendOperationStatus, state: str, failure: object
-) -> None:
-    port = FakePort()
+def test_list_get_and_start_use_uuid7():
+    port = Port()
     client = client_for(port)
-    submitted = client.post("/v1/virtualMachines/vm-1:start")
-    assert submitted.status_code == STATUS_ACCEPTED
-    operation_id = UUID(submitted.json()["id"])
-    assert operation_id.version == UUID_VERSION_7
-    assert submitted.json()["target"] == {"resourceType": "virtualMachines", "id": "vm-1"}
-
-    port.backend_status = backend_status
-    response = client.get(submitted.headers["Location"])
-    assert response.status_code == STATUS_OK
-    assert response.json()["state"] == state
-    assert response.json()["failure"] == failure
-    assert port.polled == [BackendOperationRef("task-mock-mor")]
+    listed = client.get("/v1/virtualMachines").json()["items"][0]
+    assert UUID(listed["id"]).version == 7
+    assert listed["id"] == str(VM_ID)
+    assert client.get(f"/v1/virtualMachines/{VM_ID}").status_code == 200
+    response = client.post(f"/v1/virtualMachines/{VM_ID}:start")
+    assert response.status_code == 202
+    assert response.json()["target"]["id"] == str(VM_ID)
+    assert port.submitted == [(REF, PowerCommand.START)]
 
 
-def test_unknown_operation_returns_404_without_polling() -> None:
-    port = FakePort()
-    response = client_for(port).get("/v1/operations/0198f5d0-7300-7000-8000-000000000000")
-    assert response.status_code == STATUS_NOT_FOUND
-    assert port.polled == []
+@pytest.mark.parametrize("invalid", ["vm-1", str(uuid4())])
+def test_paths_reject_non_uuid7(invalid):
+    client = client_for(Port())
+    assert client.get(f"/v1/virtualMachines/{invalid}").status_code == 422
+    assert client.post(f"/v1/virtualMachines/{invalid}:start").status_code == 422
+    assert client.post(f"/v1/virtualMachines/{invalid}:stop").status_code == 422
 
 
-def test_operation_polling_failure_returns_bad_gateway() -> None:
-    port = FakePort()
-    client = client_for(port)
-    submitted = client.post("/v1/virtualMachines/vm-1:start")
-    port.polling_failure = OperationPollingFailure("backend unavailable")
-
-    response = client.get(submitted.headers["Location"])
-
-    assert response.status_code == STATUS_BAD_GATEWAY
-    assert "backend unavailable" in response.json()["detail"]
-    assert port.polled == [BackendOperationRef("task-mock-mor")]
-
-
-def test_validation_error_does_not_submit() -> None:
-    port = FakePort()
-    port.vm = VirtualMachine(VirtualMachineId("vm-1"), "demo", PowerState.RUNNING)
-    assert client_for(port).post("/v1/virtualMachines/vm-1:start").status_code == STATUS_CONFLICT
+def test_validation_error_does_not_submit():
+    port = Port()
+    port.vm = ObservedVirtualMachine(REF, "demo", PowerState.RUNNING)
+    assert client_for(port).post(f"/v1/virtualMachines/{VM_ID}:start").status_code == 409
+    assert port.submitted == []

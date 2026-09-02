@@ -4,6 +4,12 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Protocol
 
+from iaas_sim.application.identity import (
+    BackendVirtualMachineRef,
+    VirtualMachineIdentityNotFound,
+    VirtualMachineIdentityPersistenceFailure,
+    VirtualMachineIdentityPort,
+)
 from iaas_sim.application.operation import (
     BackendOperationRef,
     OperationRegistryPort,
@@ -13,7 +19,14 @@ from iaas_sim.domain.entity.operation import Operation, OperationId, Running
 from iaas_sim.domain.entity.snapshot import Snapshot, SnapshotId
 from iaas_sim.domain.entity.virtual_machine import VirtualMachineId
 from iaas_sim.domain.resource_reference import ResourceReference
-from iaas_sim.result import Ok, Result, and_then, map
+from iaas_sim.result import Err, Ok, Result
+
+
+@dataclass(frozen=True, slots=True)
+class ObservedSnapshot:
+    id: SnapshotId
+    name: str
+    owner_backend_ref: BackendVirtualMachineRef
 
 
 @dataclass(frozen=True, slots=True)
@@ -35,31 +48,60 @@ class SnapshotCommandSubmissionFailure:
 
 
 type SnapshotApplicationError = (
-    SnapshotNotFound | SnapshotBackendFailure | SnapshotCommandSubmissionFailure
+    SnapshotNotFound
+    | SnapshotBackendFailure
+    | SnapshotCommandSubmissionFailure
+    | VirtualMachineIdentityPersistenceFailure
+    | VirtualMachineIdentityNotFound
 )
 
 
 class SnapshotPort(Protocol):
-    def list_snapshots(self) -> Result[Sequence[Snapshot], SnapshotBackendFailure]: ...
+    def list_snapshots(self) -> Result[Sequence[ObservedSnapshot], SnapshotBackendFailure]: ...
     def get_snapshot(
         self, snapshot_id: SnapshotId
-    ) -> Result[Snapshot, SnapshotNotFound | SnapshotBackendFailure]: ...
+    ) -> Result[ObservedSnapshot, SnapshotNotFound | SnapshotBackendFailure]: ...
     def submit_create_snapshot(
-        self, virtual_machine_id: VirtualMachineId, name: str
+        self, backend_ref: BackendVirtualMachineRef, name: str
     ) -> Result[BackendOperationRef, SnapshotCommandSubmissionFailure]: ...
     def submit_delete_snapshot(
         self, snapshot_id: SnapshotId
     ) -> Result[BackendOperationRef, SnapshotCommandSubmissionFailure]: ...
 
 
-def list_snapshots(port: SnapshotPort) -> Result[Sequence[Snapshot], SnapshotBackendFailure]:
-    return port.list_snapshots()
+def _project(
+    observed: ObservedSnapshot, identity: VirtualMachineIdentityPort
+) -> Result[Snapshot, SnapshotApplicationError]:
+    owner = identity.get_or_create_by_backend_ref(observed.owner_backend_ref)
+    if isinstance(owner, Err):
+        return Err(owner.error)
+    return Ok(
+        Snapshot(observed.id, observed.name, ResourceReference("virtualMachines", str(owner.value)))
+    )
+
+
+def list_snapshots(
+    port: SnapshotPort, identity: VirtualMachineIdentityPort
+) -> Result[Sequence[Snapshot], SnapshotApplicationError]:
+    listed = port.list_snapshots()
+    if isinstance(listed, Err):
+        return Err(listed.error)
+    values: list[Snapshot] = []
+    for item in listed.value:
+        projected = _project(item, identity)
+        if isinstance(projected, Err):
+            return projected
+        values.append(projected.value)
+    return Ok(tuple(values))
 
 
 def get_snapshot(
-    port: SnapshotPort, snapshot_id: SnapshotId
-) -> Result[Snapshot, SnapshotNotFound | SnapshotBackendFailure]:
-    return port.get_snapshot(snapshot_id)
+    port: SnapshotPort, identity: VirtualMachineIdentityPort, snapshot_id: SnapshotId
+) -> Result[Snapshot, SnapshotApplicationError]:
+    observed = port.get_snapshot(snapshot_id)
+    if isinstance(observed, Err):
+        return Err(observed.error)
+    return _project(observed.value, identity)
 
 
 def _register(
@@ -69,41 +111,50 @@ def _register(
     return Ok(Operation(tracked.id, tracked.target, tracked.action, Running()))
 
 
-def create_snapshot(
+def create_snapshot(  # noqa: PLR0917
     port: SnapshotPort,
+    identity: VirtualMachineIdentityPort,
     registry: OperationRegistryPort,
     operation_id: OperationId,
     virtual_machine_id: VirtualMachineId,
     name: str,
 ) -> Result[Operation, SnapshotApplicationError]:
-    tracked = map(
-        port.submit_create_snapshot(virtual_machine_id, name),
-        lambda backend_ref: TrackedOperation(
+    mapped = identity.get_backend_ref(virtual_machine_id)
+    if isinstance(mapped, Err):
+        return Err(mapped.error)
+    submitted = port.submit_create_snapshot(mapped.value, name)
+    if isinstance(submitted, Err):
+        return Err(submitted.error)
+    return _register(
+        registry,
+        TrackedOperation(
             operation_id,
             ResourceReference("virtualMachines", str(virtual_machine_id)),
             "CREATE_SNAPSHOT",
-            backend_ref,
+            submitted.value,
         ),
     )
-    return and_then(tracked, lambda operation: _register(registry, operation))
 
 
 def delete_snapshot(
     port: SnapshotPort,
+    identity: VirtualMachineIdentityPort,
     registry: OperationRegistryPort,
     operation_id: OperationId,
     snapshot_id: SnapshotId,
 ) -> Result[Operation, SnapshotApplicationError]:
-    submitted = and_then(
-        port.get_snapshot(snapshot_id), lambda snapshot: port.submit_delete_snapshot(snapshot.id)
-    )
-    tracked = map(
-        submitted,
-        lambda backend_ref: TrackedOperation(
+    observed = port.get_snapshot(snapshot_id)
+    if isinstance(observed, Err):
+        return Err(observed.error)
+    submitted = port.submit_delete_snapshot(snapshot_id)
+    if isinstance(submitted, Err):
+        return Err(submitted.error)
+    return _register(
+        registry,
+        TrackedOperation(
             operation_id,
             ResourceReference("snapshots", str(snapshot_id)),
             "DELETE_SNAPSHOT",
-            backend_ref,
+            submitted.value,
         ),
     )
-    return and_then(tracked, lambda operation: _register(registry, operation))

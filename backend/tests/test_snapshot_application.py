@@ -1,105 +1,82 @@
+# pyright: basic, reportArgumentType=false, reportAttributeAccessIssue=false
 from collections.abc import Sequence
-from uuid import UUID
+from uuid import uuid7
 
 from iaas_sim.adapters.memory.operation import InMemoryOperationRegistry
+from iaas_sim.application.identity import BackendVirtualMachineRef
 from iaas_sim.application.operation import BackendOperationRef
 from iaas_sim.application.snapshot import (
+    ObservedSnapshot,
     SnapshotBackendFailure,
-    SnapshotCommandSubmissionFailure,
     SnapshotNotFound,
     create_snapshot,
     delete_snapshot,
     get_snapshot,
     list_snapshots,
 )
-from iaas_sim.domain.entity.operation import OperationId, Running
-from iaas_sim.domain.entity.snapshot import Snapshot, SnapshotId
+from iaas_sim.domain.entity.operation import OperationId
+from iaas_sim.domain.entity.snapshot import SnapshotId
 from iaas_sim.domain.entity.virtual_machine import VirtualMachineId
-from iaas_sim.domain.resource_reference import ResourceReference
 from iaas_sim.result import Err, Ok, Result
 
-OPERATION_ID = OperationId(UUID("0198f5d0-7300-7000-8000-000000000000"))
+VM_ID = VirtualMachineId(uuid7())
+REF = BackendVirtualMachineRef("vm-1")
 
 
-class FakeSnapshotPort:
-    def __init__(self) -> None:
-        self.snapshot = Snapshot(
-            SnapshotId("snapshot-1"), "before-upgrade", ResourceReference("virtualMachines", "vm-1")
-        )
-        self.backend_failure: SnapshotBackendFailure | None = None
-        self.submission_failure: SnapshotCommandSubmissionFailure | None = None
-        self.created: list[tuple[VirtualMachineId, str]] = []
-        self.deleted: list[SnapshotId] = []
+class Identity:
+    def get_or_create_by_backend_ref(self, backend_ref):
+        return Ok(VM_ID)
 
-    def list_snapshots(self) -> Result[Sequence[Snapshot], SnapshotBackendFailure]:
-        return Err(self.backend_failure) if self.backend_failure else Ok((self.snapshot,))
+    def get_backend_ref(self, virtual_machine_id):
+        return Ok(REF)
 
-    def get_snapshot(
-        self, snapshot_id: SnapshotId
-    ) -> Result[Snapshot, SnapshotNotFound | SnapshotBackendFailure]:
-        if self.backend_failure:
-            return Err(self.backend_failure)
+
+class Port:
+    def __init__(self):
+        self.snapshot = ObservedSnapshot(SnapshotId("snapshot-1"), "before", REF)
+        self.created = []
+        self.deleted = []
+
+    def list_snapshots(self) -> Result[Sequence[ObservedSnapshot], SnapshotBackendFailure]:
+        return Ok((self.snapshot,))
+
+    def get_snapshot(self, snapshot_id):
         return (
             Ok(self.snapshot)
             if snapshot_id == self.snapshot.id
             else Err(SnapshotNotFound(snapshot_id))
         )
 
-    def submit_create_snapshot(
-        self, virtual_machine_id: VirtualMachineId, name: str
-    ) -> Result[BackendOperationRef, SnapshotCommandSubmissionFailure]:
-        self.created.append((virtual_machine_id, name))
-        return (
-            Err(self.submission_failure)
-            if self.submission_failure
-            else Ok(BackendOperationRef("task-create"))
-        )
+    def submit_create_snapshot(self, backend_ref, name):
+        self.created.append((backend_ref, name))
+        return Ok(BackendOperationRef("task-create"))
 
-    def submit_delete_snapshot(
-        self, snapshot_id: SnapshotId
-    ) -> Result[BackendOperationRef, SnapshotCommandSubmissionFailure]:
+    def submit_delete_snapshot(self, snapshot_id):
         self.deleted.append(snapshot_id)
-        return (
-            Err(self.submission_failure)
-            if self.submission_failure
-            else Ok(BackendOperationRef("task-delete"))
-        )
+        return Ok(BackendOperationRef("task-delete"))
 
 
-def test_snapshot_reads_and_failures_propagate() -> None:
-    port = FakeSnapshotPort()
-    assert isinstance(list_snapshots(port), Ok)
-    assert get_snapshot(port, port.snapshot.id) == Ok(port.snapshot)
-    assert get_snapshot(port, SnapshotId("unknown")) == Err(SnapshotNotFound(SnapshotId("unknown")))
-    port.backend_failure = SnapshotBackendFailure("list", "offline")
-    assert list_snapshots(port) == Err(port.backend_failure)
+def test_snapshot_projection_uses_public_vm_id():
+    port = Port()
+    identity = Identity()
+    assert list_snapshots(port, identity).value[0].virtual_machine.resource_id == str(VM_ID)
+    assert get_snapshot(port, identity, port.snapshot.id).value.id == port.snapshot.id
 
 
-def test_create_registers_vm_target_only_after_submission() -> None:
-    port, registry = FakeSnapshotPort(), InMemoryOperationRegistry()
+def test_create_resolves_backend_ref():
+    port = Port()
     result = create_snapshot(
-        port, registry, OPERATION_ID, VirtualMachineId("vm-1"), "before-upgrade"
+        port, Identity(), InMemoryOperationRegistry(), OperationId(uuid7()), VM_ID, "before"
     )
-    assert isinstance(result, Ok) and isinstance(result.value.status, Running)
-    assert result.value.target == ResourceReference("virtualMachines", "vm-1")
-    assert registry.get(OPERATION_ID) is not None
-    port.submission_failure = SnapshotCommandSubmissionFailure("create", "vm-1", "no")
-    other = OperationId(UUID("0198f5d0-7300-7000-8000-000000000001"))
-    assert isinstance(create_snapshot(port, registry, other, VirtualMachineId("vm-1"), "x"), Err)
-    assert registry.get(other) is None
+    assert isinstance(result, Ok)
+    assert port.created == [(REF, "before")]
+    assert result.value.target.resource_id == str(VM_ID)
 
 
-def test_delete_short_circuits_and_registers_snapshot_target() -> None:
-    port, registry = FakeSnapshotPort(), InMemoryOperationRegistry()
-    result = delete_snapshot(port, registry, OPERATION_ID, port.snapshot.id)
-    assert isinstance(result, Ok) and result.value.target == ResourceReference(
-        "snapshots", "snapshot-1"
+def test_delete_keeps_snapshot_identity():
+    port = Port()
+    result = delete_snapshot(
+        port, Identity(), InMemoryOperationRegistry(), OperationId(uuid7()), port.snapshot.id
     )
-    assert port.deleted == [port.snapshot.id]
-    port.deleted.clear()
-    other = OperationId(UUID("0198f5d0-7300-7000-8000-000000000001"))
-    assert isinstance(delete_snapshot(port, registry, other, SnapshotId("unknown")), Err)
-    assert port.deleted == [] and registry.get(other) is None
-    port.submission_failure = SnapshotCommandSubmissionFailure("delete", "snapshot-1", "no")
-    assert isinstance(delete_snapshot(port, registry, other, port.snapshot.id), Err)
-    assert registry.get(other) is None
+    assert isinstance(result, Ok)
+    assert port.deleted == [SnapshotId("snapshot-1")]
