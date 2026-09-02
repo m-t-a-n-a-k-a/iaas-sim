@@ -8,12 +8,18 @@ from os import PathLike
 BUSY_TIMEOUT_MILLISECONDS = 5_000
 
 
-def connect_database(database_path: str | PathLike[str]) -> sqlite3.Connection:
-    """Open an independently owned connection with integrity checks enabled."""
+@contextmanager
+def connect_database(
+    database_path: str | PathLike[str],
+) -> Generator[sqlite3.Connection]:
+    """Own a connection for the duration of a context manager scope."""
     connection = sqlite3.connect(database_path, timeout=BUSY_TIMEOUT_MILLISECONDS / 1_000)
-    connection.execute("PRAGMA foreign_keys = ON")
-    connection.execute(f"PRAGMA busy_timeout = {BUSY_TIMEOUT_MILLISECONDS}")
-    return connection
+    try:
+        connection.execute("PRAGMA foreign_keys = ON")
+        connection.execute(f"PRAGMA busy_timeout = {BUSY_TIMEOUT_MILLISECONDS}")
+        yield connection
+    finally:
+        connection.close()
 
 
 @contextmanager
