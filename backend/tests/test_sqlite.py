@@ -42,7 +42,44 @@ def test_migration_creates_versioned_schema_and_is_idempotent(tmp_path: Path) ->
         }
 
     assert version == SCHEMA_VERSION
-    assert {"virtual_machine", "snapshot"} <= tables
+    assert {"virtual_machine", "snapshot", "operation"} <= tables
+
+
+def test_v1_database_upgrades_without_losing_identity_rows(tmp_path: Path) -> None:
+    path = _database_path(tmp_path)
+    with connect_database(path) as connection:
+        connection.execute(
+            """CREATE TABLE virtual_machine
+            (id TEXT PRIMARY KEY, backend_ref TEXT NOT NULL UNIQUE) STRICT"""
+        )
+        connection.execute(
+            """CREATE TABLE snapshot
+            (id TEXT PRIMARY KEY, backend_ref TEXT NOT NULL UNIQUE,
+             virtual_machine_id TEXT NOT NULL,
+             FOREIGN KEY (virtual_machine_id) REFERENCES virtual_machine(id)) STRICT"""
+        )
+        connection.execute(
+            "CREATE INDEX snapshot_virtual_machine_id_idx ON snapshot (virtual_machine_id)"
+        )
+        connection.execute("INSERT INTO virtual_machine VALUES ('vm-id', 'vm-17')")
+        connection.execute("INSERT INTO snapshot VALUES ('snapshot-id', 'snapshot-17', 'vm-id')")
+        connection.execute("PRAGMA user_version = 1")
+        connection.commit()
+    migrate_database(path)
+    with connect_database(path) as connection:
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 2
+        assert (
+            connection.execute("SELECT backend_ref FROM virtual_machine").fetchone()[0] == "vm-17"
+        )
+        assert connection.execute("SELECT backend_ref FROM snapshot").fetchone()[0] == "snapshot-17"
+
+
+def test_newer_schema_fails_fast(tmp_path: Path) -> None:
+    path = _database_path(tmp_path)
+    with connect_database(path) as connection:
+        connection.execute("PRAGMA user_version = 3")
+    with pytest.raises(RuntimeError, match="newer than supported"):
+        migrate_database(path)
 
 
 def test_connections_enable_foreign_keys(tmp_path: Path) -> None:

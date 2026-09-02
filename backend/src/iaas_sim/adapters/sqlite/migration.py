@@ -4,7 +4,7 @@ from os import PathLike
 
 from iaas_sim.adapters.sqlite.connection import connect_database, transaction
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 _VERSION_1_STATEMENTS = (
     """CREATE TABLE virtual_machine (
@@ -21,6 +21,21 @@ _VERSION_1_STATEMENTS = (
     ON snapshot (virtual_machine_id)""",
 )
 
+_VERSION_2_STATEMENTS = (
+    """CREATE TABLE operation (
+    id TEXT PRIMARY KEY,
+    target_resource_type TEXT NOT NULL,
+    target_resource_id TEXT NOT NULL,
+    action TEXT NOT NULL,
+    state TEXT NOT NULL,
+    failure_reason TEXT,
+    backend_ref TEXT NOT NULL,
+    CHECK (state IN ('RUNNING', 'SUCCEEDED', 'FAILED')),
+    CHECK ((state = 'FAILED' AND failure_reason IS NOT NULL)
+        OR (state <> 'FAILED' AND failure_reason IS NULL))
+) STRICT""",
+)
+
 
 def migrate_database(database_path: str | PathLike[str]) -> None:
     """Upgrade a database to the current schema version transactionally."""
@@ -35,4 +50,10 @@ def migrate_database(database_path: str | PathLike[str]) -> None:
             with transaction(connection):
                 for statement in _VERSION_1_STATEMENTS:
                     connection.execute(statement)
-                connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+                connection.execute("PRAGMA user_version = 1")
+            current_version = 1
+        if current_version == 1:
+            with transaction(connection):
+                for statement in _VERSION_2_STATEMENTS:
+                    connection.execute(statement)
+                connection.execute("PRAGMA user_version = 2")

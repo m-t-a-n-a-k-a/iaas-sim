@@ -2,7 +2,7 @@ from uuid import uuid7
 
 import pytest
 
-from iaas_sim.adapters.memory.operation import InMemoryOperationRegistry
+from iaas_sim.adapters.memory.operation import InMemoryOperationStore
 from iaas_sim.application.get_operation import BACKEND_OPERATION_FAILURE_REASON, get_operation
 from iaas_sim.application.operation import (
     BackendOperationFailed,
@@ -12,7 +12,6 @@ from iaas_sim.application.operation import (
     BackendOperationSucceeded,
     OperationNotFound,
     OperationPollingFailure,
-    TrackedOperation,
 )
 from iaas_sim.domain.entity.operation import (
     Failed,
@@ -57,10 +56,12 @@ def test_backend_status_is_projected_to_operation_adt(
 ) -> None:
     operation_id = OperationId(uuid7())
     target = ResourceReference("virtualMachines", "vm-1")
-    registry = InMemoryOperationRegistry()
-    registry.add(TrackedOperation(operation_id, target, "START", BackendOperationRef("opaque-ref")))
+    store = InMemoryOperationStore()
+    assert store.create_running(
+        Operation(operation_id, target, "START", Running()), BackendOperationRef("opaque-ref")
+    ) == Ok(Operation(operation_id, target, "START", Running()))
 
-    assert get_operation(registry, FakeBackend(backend_status), operation_id) == Ok(
+    assert get_operation(store, FakeBackend(backend_status), operation_id) == Ok(
         Operation(operation_id, target, "START", expected_status)
     )
 
@@ -68,24 +69,20 @@ def test_backend_status_is_projected_to_operation_adt(
 def test_unknown_operation_is_typed_failure() -> None:
     operation_id = OperationId(uuid7())
     assert get_operation(
-        InMemoryOperationRegistry(), FakeBackend(BackendOperationRunning()), operation_id
+        InMemoryOperationStore(), FakeBackend(BackendOperationRunning()), operation_id
     ) == Err(OperationNotFound(operation_id))
 
 
 def test_polling_failure_is_returned_unchanged() -> None:
     operation_id = OperationId(uuid7())
     failure = OperationPollingFailure("backend unavailable")
-    registry = InMemoryOperationRegistry()
-    registry.add(
-        TrackedOperation(
-            operation_id,
-            ResourceReference("virtualMachines", "vm-1"),
-            "START",
-            BackendOperationRef("opaque-ref"),
-        )
+    store = InMemoryOperationStore()
+    store.create_running(
+        Operation(operation_id, ResourceReference("virtualMachines", "vm-1"), "START", Running()),
+        BackendOperationRef("opaque-ref"),
     )
 
-    assert get_operation(registry, FakeBackend(failure), operation_id) == Err(failure)
+    assert get_operation(store, FakeBackend(failure), operation_id) == Err(failure)
 
 
 def test_operation_status_constructors_only_allow_valid_shapes() -> None:

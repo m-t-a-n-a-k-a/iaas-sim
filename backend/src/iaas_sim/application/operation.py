@@ -3,8 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import NewType, Protocol
 
-from iaas_sim.domain.entity.operation import OperationId
-from iaas_sim.domain.resource_reference import ResourceReference
+from iaas_sim.domain.entity.operation import Operation, OperationId
 from iaas_sim.result import Result
 
 BackendOperationRef = NewType("BackendOperationRef", str)
@@ -31,10 +30,8 @@ type BackendOperationStatus = (
 
 
 @dataclass(frozen=True, slots=True)
-class TrackedOperation:
-    id: OperationId
-    target: ResourceReference
-    action: str
+class StoredOperation:
+    operation: Operation
     backend_ref: BackendOperationRef
 
 
@@ -44,13 +41,25 @@ class OperationNotFound:
 
 
 @dataclass(frozen=True, slots=True)
+class OperationPersistenceFailure:
+    operation: str
+    reason: str
+
+
+@dataclass(frozen=True, slots=True)
 class OperationPollingFailure:
     reason: str
 
 
-class OperationRegistryPort(Protocol):
-    def add(self, operation: TrackedOperation) -> None: ...
-    def get(self, operation_id: OperationId) -> TrackedOperation | None: ...
+type OperationStoreError = OperationNotFound | OperationPersistenceFailure
+
+
+class OperationStorePort(Protocol):
+    def create_running(
+        self, operation: Operation, backend_ref: BackendOperationRef
+    ) -> Result[Operation, OperationPersistenceFailure]: ...
+    def get(self, operation_id: OperationId) -> Result[StoredOperation, OperationStoreError]: ...
+    def complete(self, operation: Operation) -> Result[Operation, OperationStoreError]: ...
 
 
 class BackendOperationPort(Protocol):

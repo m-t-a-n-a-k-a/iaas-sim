@@ -4,7 +4,7 @@ from uuid import uuid7
 
 import pytest
 
-from iaas_sim.adapters.memory.operation import InMemoryOperationRegistry
+from iaas_sim.adapters.memory.operation import InMemoryOperationStore
 from iaas_sim.application.identity import BackendVirtualMachineRef, VirtualMachineIdentityNotFound
 from iaas_sim.application.operation import BackendOperationRef
 from iaas_sim.application.virtual_machine import (
@@ -82,7 +82,7 @@ def test_list_and_get_project_public_identity():
 )
 def test_valid_command_uses_backend_ref(state, use_case, command):
     port = Port(state)
-    registry = InMemoryOperationRegistry()
+    registry = InMemoryOperationStore()
     result = use_case(port, Identity(), registry, OperationId(uuid7()), VM_ID)
     assert isinstance(result, Ok)
     assert result.value.target.resource_id == str(VM_ID)
@@ -98,7 +98,7 @@ def test_valid_command_uses_backend_ref(state, use_case, command):
 )
 def test_invalid_command_has_no_side_effect(state, use_case, error):
     port = Port(state)
-    result = use_case(port, Identity(), InMemoryOperationRegistry(), OperationId(uuid7()), VM_ID)
+    result = use_case(port, Identity(), InMemoryOperationStore(), OperationId(uuid7()), VM_ID)
     assert result == Err(error)
     assert port.submissions == []
 
@@ -108,7 +108,7 @@ def test_identity_failure_has_no_backend_side_effect():
     unknown = VirtualMachineId(uuid7())
     assert isinstance(
         start_virtual_machine(
-            port, Identity(), InMemoryOperationRegistry(), OperationId(uuid7()), unknown
+            port, Identity(), InMemoryOperationStore(), OperationId(uuid7()), unknown
         ),
         Err,
     )
@@ -127,7 +127,7 @@ def test_power_submission_failure_maps_to_public_identity():
     port = Port(PowerState.STOPPED)
     port.failure = PowerCommandBackendSubmissionFailure(REF, "failure for vm-1")
     result = start_virtual_machine(
-        port, Identity(), InMemoryOperationRegistry(), OperationId(uuid7()), VM_ID
+        port, Identity(), InMemoryOperationStore(), OperationId(uuid7()), VM_ID
     )
     assert result == Err(PowerCommandSubmissionFailure(VM_ID, "failure for vm-1"))
     assert result.error.virtual_machine_id == VM_ID

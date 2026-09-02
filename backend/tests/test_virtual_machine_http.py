@@ -11,7 +11,7 @@ from iaas_sim.adapters.http.virtual_machine import (
     create_operation_router,
     create_virtual_machine_router,
 )
-from iaas_sim.adapters.memory.operation import InMemoryOperationRegistry
+from iaas_sim.adapters.memory.operation import InMemoryOperationStore
 from iaas_sim.application.identity import (
     BackendVirtualMachineRef,
     VirtualMachineIdentityNotFound,
@@ -76,7 +76,7 @@ class Port:
 
 
 def client_for(port):
-    registry = InMemoryOperationRegistry()
+    registry = InMemoryOperationStore()
     app = FastAPI()
     app.include_router(create_virtual_machine_router(port, Identity(), registry))
     app.include_router(create_operation_router(registry, port))
@@ -151,7 +151,7 @@ def test_identity_persistence_failure_does_not_expose_backend_reason():
 
     app = FastAPI()
     app.include_router(
-        create_virtual_machine_router(Port(), FailingIdentity(), InMemoryOperationRegistry())
+        create_virtual_machine_router(Port(), FailingIdentity(), InMemoryOperationStore())
     )
     response = TestClient(app).get("/v1/virtualMachines")
     assert response.status_code == 500

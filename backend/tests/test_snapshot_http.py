@@ -7,7 +7,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from iaas_sim.adapters.http.snapshot import create_snapshot_router
-from iaas_sim.adapters.memory.operation import InMemoryOperationRegistry
+from iaas_sim.adapters.memory.operation import InMemoryOperationStore
 from iaas_sim.application.identity import (
     BackendSnapshotRef,
     BackendVirtualMachineRef,
@@ -72,7 +72,7 @@ class Port:
 def client(port=None):
     app = FastAPI()
     app.include_router(
-        create_snapshot_router(port or Port(), Identity(), Identity(), InMemoryOperationRegistry())
+        create_snapshot_router(port or Port(), Identity(), Identity(), InMemoryOperationStore())
     )
     return TestClient(app)
 
@@ -148,7 +148,7 @@ def test_identity_persistence_failure_does_not_expose_backend_reason():
     app = FastAPI()
     app.include_router(
         create_snapshot_router(
-            Port(), FailingIdentity(), FailingIdentity(), InMemoryOperationRegistry()
+            Port(), FailingIdentity(), FailingIdentity(), InMemoryOperationStore()
         )
     )
     response = TestClient(app).get("/v1/snapshots")
@@ -166,7 +166,7 @@ def test_identity_not_found_uses_stable_public_message():
     app = FastAPI()
     app.include_router(
         create_snapshot_router(
-            Port(), MissingIdentity(), MissingIdentity(), InMemoryOperationRegistry()
+            Port(), MissingIdentity(), MissingIdentity(), InMemoryOperationStore()
         )
     )
     response = TestClient(app).post(

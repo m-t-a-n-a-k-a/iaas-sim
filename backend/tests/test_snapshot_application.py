@@ -2,7 +2,7 @@
 from collections.abc import Sequence
 from uuid import uuid7
 
-from iaas_sim.adapters.memory.operation import InMemoryOperationRegistry
+from iaas_sim.adapters.memory.operation import InMemoryOperationStore
 from iaas_sim.application.identity import (
     BackendSnapshotRef,
     BackendVirtualMachineRef,
@@ -82,7 +82,7 @@ def test_snapshot_projection_uses_public_vm_id():
 def test_create_resolves_backend_ref():
     port = Port()
     result = create_snapshot(
-        port, Identity(), InMemoryOperationRegistry(), OperationId(uuid7()), VM_ID, "before"
+        port, Identity(), InMemoryOperationStore(), OperationId(uuid7()), VM_ID, "before"
     )
     assert isinstance(result, Ok)
     assert port.created == [(REF, "before")]
@@ -95,7 +95,7 @@ def test_create_failure_maps_to_public_vm_identity():
         SnapshotBackendSubmissionFailure("create", str(backend_ref), "failure for vm-1")
     )
     result = create_snapshot(
-        port, Identity(), InMemoryOperationRegistry(), OperationId(uuid7()), VM_ID, "before"
+        port, Identity(), InMemoryOperationStore(), OperationId(uuid7()), VM_ID, "before"
     )
     assert result == Err(SnapshotCommandSubmissionFailure("create", str(VM_ID), "failure for vm-1"))
     assert result.error.resource_id == str(VM_ID)
@@ -104,7 +104,7 @@ def test_create_failure_maps_to_public_vm_identity():
 def test_delete_keeps_snapshot_identity():
     port = Port()
     result = delete_snapshot(
-        port, Identity(), InMemoryOperationRegistry(), OperationId(uuid7()), SNAPSHOT_ID
+        port, Identity(), InMemoryOperationStore(), OperationId(uuid7()), SNAPSHOT_ID
     )
     assert isinstance(result, Ok)
     assert port.deleted == [SNAPSHOT_REF]
