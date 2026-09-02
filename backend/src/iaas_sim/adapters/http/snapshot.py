@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from typing import Literal, NoReturn
-from uuid import uuid7
+from uuid import UUID, uuid7
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse
@@ -9,6 +9,7 @@ from pydantic import BaseModel
 
 from iaas_sim.adapters.http.virtual_machine import operation_resource, parse_virtual_machine_id
 from iaas_sim.application.identity import (
+    SnapshotIdentityPort,
     VirtualMachineIdentityNotFound,
     VirtualMachineIdentityPort,
 )
@@ -30,6 +31,8 @@ from iaas_sim.result import Err, Ok
 
 # FastAPI accesses nested route functions through decorator registration.
 # pyright: reportUnusedFunction=false
+
+UUID_VERSION_7 = 7
 
 
 class VirtualMachineReferenceInput(BaseModel):
@@ -53,6 +56,16 @@ def _snapshot_resource(snapshot: Snapshot) -> dict[str, object]:
     }
 
 
+def parse_snapshot_id(value: str) -> SnapshotId:
+    try:
+        parsed = UUID(value)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="Snapshot ID must be a UUIDv7") from exc
+    if parsed.version != UUID_VERSION_7:
+        raise HTTPException(status_code=422, detail="Snapshot ID must be a UUIDv7")
+    return SnapshotId(parsed)
+
+
 def _raise(error: SnapshotApplicationError) -> NoReturn:
     if isinstance(error, SnapshotNotFound):
         raise HTTPException(status_code=404, detail="Snapshot not found")
@@ -71,13 +84,16 @@ def _raise(error: SnapshotApplicationError) -> NoReturn:
 
 
 def create_snapshot_router(
-    port: SnapshotPort, identity: VirtualMachineIdentityPort, registry: OperationRegistryPort
+    port: SnapshotPort,
+    vm_identity: VirtualMachineIdentityPort,
+    snapshot_identity: SnapshotIdentityPort,
+    registry: OperationRegistryPort,
 ) -> APIRouter:
     router = APIRouter(prefix="/v1/snapshots", tags=["snapshots"])
 
     @router.get("")
     def list_resources() -> dict[str, list[dict[str, object]]]:
-        match list_snapshots(port, identity):
+        match list_snapshots(port, vm_identity, snapshot_identity):
             case Err(error):
                 _raise(error)
             case Ok(snapshots):
@@ -85,7 +101,7 @@ def create_snapshot_router(
 
     @router.get("/{snapshot_id}")
     def get_resource(snapshot_id: str) -> dict[str, object]:
-        match get_snapshot(port, identity, SnapshotId(snapshot_id)):
+        match get_snapshot(port, vm_identity, snapshot_identity, parse_snapshot_id(snapshot_id)):
             case Err(error):
                 _raise(error)
             case Ok(snapshot):
@@ -95,7 +111,7 @@ def create_snapshot_router(
     def create_resource(body: CreateSnapshotInput) -> JSONResponse:
         result = create_snapshot(
             port,
-            identity,
+            vm_identity,
             registry,
             OperationId(uuid7()),
             parse_virtual_machine_id(body.virtualMachine.id),
@@ -114,7 +130,7 @@ def create_snapshot_router(
     @router.delete("/{snapshot_id}")
     def delete_resource(snapshot_id: str) -> JSONResponse:
         result = delete_snapshot(
-            port, identity, registry, OperationId(uuid7()), SnapshotId(snapshot_id)
+            port, snapshot_identity, registry, OperationId(uuid7()), parse_snapshot_id(snapshot_id)
         )
         match result:
             case Err(error):

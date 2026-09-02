@@ -9,22 +9,26 @@ from fastapi.testclient import TestClient
 from iaas_sim.adapters.http.snapshot import create_snapshot_router
 from iaas_sim.adapters.memory.operation import InMemoryOperationRegistry
 from iaas_sim.application.identity import (
+    BackendSnapshotRef,
     BackendVirtualMachineRef,
+    SnapshotIdentityMapping,
     VirtualMachineIdentityNotFound,
     VirtualMachineIdentityPersistenceFailure,
 )
 from iaas_sim.application.operation import BackendOperationRef
 from iaas_sim.application.snapshot import (
+    BackendSnapshotNotFound,
     ObservedSnapshot,
     SnapshotBackendFailure,
     SnapshotBackendSubmissionFailure,
-    SnapshotNotFound,
 )
 from iaas_sim.domain.entity.snapshot import SnapshotId
 from iaas_sim.domain.entity.virtual_machine import VirtualMachineId
 from iaas_sim.result import Err, Ok, Result
 
 VM_ID = VirtualMachineId(uuid7())
+SNAPSHOT_ID = SnapshotId(uuid7())
+SNAPSHOT_REF = BackendSnapshotRef("snapshot-1")
 REF = BackendVirtualMachineRef("vm-1")
 
 
@@ -35,10 +39,16 @@ class Identity:
     def get_backend_ref(self, virtual_machine_id):
         return Ok(REF)
 
+    def get_or_create_snapshot(self, backend_ref, virtual_machine_id):
+        return Ok(SNAPSHOT_ID)
+
+    def get_snapshot_mapping(self, snapshot_id):
+        return Ok(SnapshotIdentityMapping(SNAPSHOT_REF, VM_ID))
+
 
 class Port:
     def __init__(self):
-        self.snapshot = ObservedSnapshot(SnapshotId("snapshot-1"), "before", REF)
+        self.snapshot = ObservedSnapshot(SNAPSHOT_REF, "before", REF)
         self.created = []
 
     def list_snapshots(self) -> Result[Sequence[ObservedSnapshot], SnapshotBackendFailure]:
@@ -47,8 +57,8 @@ class Port:
     def get_snapshot(self, snapshot_id):
         return (
             Ok(self.snapshot)
-            if snapshot_id == self.snapshot.id
-            else Err(SnapshotNotFound(snapshot_id))
+            if snapshot_id == self.snapshot.backend_ref
+            else Err(BackendSnapshotNotFound(snapshot_id))
         )
 
     def submit_create_snapshot(self, backend_ref, name):
@@ -62,7 +72,7 @@ class Port:
 def client(port=None):
     app = FastAPI()
     app.include_router(
-        create_snapshot_router(port or Port(), Identity(), InMemoryOperationRegistry())
+        create_snapshot_router(port or Port(), Identity(), Identity(), InMemoryOperationRegistry())
     )
     return TestClient(app)
 
@@ -137,7 +147,9 @@ def test_identity_persistence_failure_does_not_expose_backend_reason():
 
     app = FastAPI()
     app.include_router(
-        create_snapshot_router(Port(), FailingIdentity(), InMemoryOperationRegistry())
+        create_snapshot_router(
+            Port(), FailingIdentity(), FailingIdentity(), InMemoryOperationRegistry()
+        )
     )
     response = TestClient(app).get("/v1/snapshots")
     assert response.status_code == 500
@@ -153,7 +165,9 @@ def test_identity_not_found_uses_stable_public_message():
 
     app = FastAPI()
     app.include_router(
-        create_snapshot_router(Port(), MissingIdentity(), InMemoryOperationRegistry())
+        create_snapshot_router(
+            Port(), MissingIdentity(), MissingIdentity(), InMemoryOperationRegistry()
+        )
     )
     response = TestClient(app).post(
         "/v1/snapshots",
@@ -164,3 +178,20 @@ def test_identity_not_found_uses_stable_public_message():
     )
     assert response.status_code == 404
     assert response.json() == {"detail": "VirtualMachine not found"}
+
+
+def test_snapshot_item_paths_require_uuid7_and_never_expose_mor():
+    api = client()
+    listed = api.get("/v1/snapshots")
+    assert listed.status_code == 200
+    item = listed.json()["items"][0]
+    assert item["id"] == str(SNAPSHOT_ID)
+    assert item["virtualMachine"]["id"] == str(VM_ID)
+    assert "snapshot-1" not in listed.text
+    assert api.get(f"/v1/snapshots/{SNAPSHOT_ID}").status_code == 200
+    deleted = api.delete(f"/v1/snapshots/{SNAPSHOT_ID}")
+    assert deleted.status_code == 202
+    assert deleted.json()["target"]["id"] == str(SNAPSHOT_ID)
+    for invalid in ("snapshot-42", "not-a-uuid", str(uuid4())):
+        assert api.get(f"/v1/snapshots/{invalid}").status_code == 422
+        assert api.delete(f"/v1/snapshots/{invalid}").status_code == 422

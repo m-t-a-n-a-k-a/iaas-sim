@@ -7,10 +7,9 @@ from iaas_sim.adapters.vsphere.adapter import (
     snapshot_roots,
     virtual_machine_property_filter,
 )
-from iaas_sim.application.identity import BackendVirtualMachineRef
+from iaas_sim.application.identity import BackendSnapshotRef, BackendVirtualMachineRef
 from iaas_sim.application.snapshot import ObservedSnapshot
 from iaas_sim.application.virtual_machine import ObservedVirtualMachine
-from iaas_sim.domain.entity.snapshot import SnapshotId
 from iaas_sim.domain.entity.virtual_machine import PowerState
 
 
@@ -86,8 +85,12 @@ def test_snapshot_tree_is_projected_to_flat_domain_snapshots() -> None:
     )
 
     assert project_snapshots(BackendVirtualMachineRef("vm-1"), roots) == (
-        ObservedSnapshot(SnapshotId("snapshot-1"), "root", BackendVirtualMachineRef("vm-1")),
-        ObservedSnapshot(SnapshotId("snapshot-2"), "child", BackendVirtualMachineRef("vm-1")),
+        ObservedSnapshot(
+            BackendSnapshotRef("snapshot-1"), "root", BackendVirtualMachineRef("vm-1")
+        ),
+        ObservedSnapshot(
+            BackendSnapshotRef("snapshot-2"), "child", BackendVirtualMachineRef("vm-1")
+        ),
     )
 
 

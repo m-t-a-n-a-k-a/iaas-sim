@@ -25,6 +25,7 @@ from iaas_sim.application.operation import (
 from iaas_sim.application.snapshot import (
     SnapshotNotFound,
     create_snapshot,
+    delete_snapshot,
     get_snapshot,
     list_snapshots,
 )
@@ -149,17 +150,27 @@ def test_vcsim_retrieve_content_success() -> None:  # noqa: PLR0915
         created_tracked = registry.get(created.value.id)
         assert created_tracked is not None
         wait_for_success(adapter, created_tracked.backend_ref)
-        snapshots = list_snapshots(adapter, identity)
+        snapshots = list_snapshots(adapter, identity, identity)
         assert isinstance(snapshots, Ok)
         snapshot = next(item for item in snapshots.value if item.name == snapshot_name)
         assert snapshot.virtual_machine.resource_id == str(public_id)
-        loaded_snapshot = get_snapshot(adapter, identity, snapshot.id)
+        repeated_snapshots = list_snapshots(adapter, identity, identity)
+        assert isinstance(repeated_snapshots, Ok)
+        assert (
+            next(item for item in repeated_snapshots.value if item.name == snapshot_name).id
+            == snapshot.id
+        )
+        loaded_snapshot = get_snapshot(adapter, identity, identity, snapshot.id)
         assert isinstance(loaded_snapshot, Ok)
         assert loaded_snapshot.value == snapshot
-        deleted = adapter.submit_delete_snapshot(snapshot.id)
+        deleted = delete_snapshot(adapter, identity, registry, OperationId(uuid7()), snapshot.id)
         assert isinstance(deleted, Ok)
-        wait_for_success(adapter, deleted.value)
-        assert adapter.get_snapshot(snapshot.id) == Err(SnapshotNotFound(snapshot.id))
+        deleted_tracked = registry.get(deleted.value.id)
+        assert deleted_tracked is not None
+        wait_for_success(adapter, deleted_tracked.backend_ref)
+        assert get_snapshot(adapter, identity, identity, snapshot.id) == Err(
+            SnapshotNotFound(snapshot.id)
+        )
     finally:
         if service_instance is not None:
             connect.Disconnect(service_instance)

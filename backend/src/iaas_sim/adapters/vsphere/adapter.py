@@ -9,7 +9,7 @@ from typing import Final, Protocol, runtime_checkable
 from pyVim import connect
 from pyVmomi import VmomiSupport, vim
 
-from iaas_sim.application.identity import BackendVirtualMachineRef
+from iaas_sim.application.identity import BackendSnapshotRef, BackendVirtualMachineRef
 from iaas_sim.application.operation import (
     BackendOperationFailed,
     BackendOperationRef,
@@ -19,10 +19,10 @@ from iaas_sim.application.operation import (
     OperationPollingFailure,
 )
 from iaas_sim.application.snapshot import (
+    BackendSnapshotNotFound,
     ObservedSnapshot,
     SnapshotBackendFailure,
     SnapshotBackendSubmissionFailure,
-    SnapshotNotFound,
 )
 from iaas_sim.application.virtual_machine import (
     ObservedVirtualMachine,
@@ -30,7 +30,6 @@ from iaas_sim.application.virtual_machine import (
     VirtualMachineBackendFailure,
     VirtualMachineBackendNotFound,
 )
-from iaas_sim.domain.entity.snapshot import SnapshotId
 from iaas_sim.domain.entity.virtual_machine import (
     PowerCommand,
     PowerState,
@@ -169,7 +168,7 @@ def project_snapshots(
             or not isinstance(children, Sequence)
         ):
             raise ValueError("malformed snapshot tree")
-        projected.append(ObservedSnapshot(SnapshotId(snapshot_id), name, backend_ref))
+        projected.append(ObservedSnapshot(BackendSnapshotRef(snapshot_id), name, backend_ref))
         for child in children:
             visit(child)
 
@@ -342,8 +341,8 @@ class VSphereAdapter:
                     logger.exception("vSphere disconnect failed")
 
     @staticmethod
-    def _snapshot_id(snapshot_object: object) -> SnapshotId:
-        return SnapshotId(str(object.__getattribute__(snapshot_object, "_moId")))
+    def _snapshot_ref(snapshot_object: object) -> BackendSnapshotRef:
+        return BackendSnapshotRef(str(object.__getattribute__(snapshot_object, "_moId")))
 
     def list_snapshots(self) -> Result[Sequence[ObservedSnapshot], SnapshotBackendFailure]:
         service_instance: vim.ServiceInstance | None = None
@@ -374,15 +373,15 @@ class VSphereAdapter:
                 connect.Disconnect(service_instance)
 
     def get_snapshot(
-        self, snapshot_id: SnapshotId
-    ) -> Result[ObservedSnapshot, SnapshotNotFound | SnapshotBackendFailure]:
+        self, backend_ref: BackendSnapshotRef
+    ) -> Result[ObservedSnapshot, BackendSnapshotNotFound | SnapshotBackendFailure]:
         listed = self.list_snapshots()
         if isinstance(listed, Err):
             return Err(listed.error)
         for snapshot in listed.value:
-            if snapshot.id == snapshot_id:
+            if snapshot.backend_ref == backend_ref:
                 return Ok(snapshot)
-        return Err(SnapshotNotFound(snapshot_id))
+        return Err(BackendSnapshotNotFound(backend_ref))
 
     def submit_create_snapshot(
         self, backend_ref: BackendVirtualMachineRef, name: str
@@ -407,7 +406,7 @@ class VSphereAdapter:
                 connect.Disconnect(service_instance)
 
     def _find_snapshot_object(
-        self, service_instance: vim.ServiceInstance, snapshot_id: SnapshotId
+        self, service_instance: vim.ServiceInstance, backend_ref: BackendSnapshotRef
     ) -> VsphereSnapshotObject | None:
         vm_content = service_instance.RetrieveContent()
         view_manager = vm_content.viewManager
@@ -423,7 +422,7 @@ class VSphereAdapter:
             while pending:
                 node = pending.pop()
                 snapshot_object = object.__getattribute__(node, "snapshot")
-                if self._snapshot_id(snapshot_object) == snapshot_id:
+                if self._snapshot_ref(snapshot_object) == backend_ref:
                     if isinstance(snapshot_object, VsphereSnapshotObject):
                         return snapshot_object
                     raise ValueError("snapshot removal API unavailable")
@@ -431,16 +430,16 @@ class VSphereAdapter:
         return None
 
     def submit_delete_snapshot(
-        self, snapshot_id: SnapshotId
+        self, backend_ref: BackendSnapshotRef
     ) -> Result[BackendOperationRef, SnapshotBackendSubmissionFailure]:
         service_instance: vim.ServiceInstance | None = None
         try:
             service_instance = self._connect()
-            snapshot = self._find_snapshot_object(service_instance, snapshot_id)
+            snapshot = self._find_snapshot_object(service_instance, backend_ref)
             if snapshot is None:
                 return Err(
                     SnapshotBackendSubmissionFailure(
-                        "delete", str(snapshot_id), "snapshot not found"
+                        "delete", str(backend_ref), "snapshot not found"
                     )
                 )
             # Delete only this snapshot; do not implicitly delete descendants. Consolidation is
@@ -449,7 +448,7 @@ class VSphereAdapter:
             return Ok(BackendOperationRef(str(object.__getattribute__(task, "_moId"))))
         except Exception as exc:
             logger.exception("vSphere snapshot deletion submission failed")
-            return Err(SnapshotBackendSubmissionFailure("delete", str(snapshot_id), str(exc)))
+            return Err(SnapshotBackendSubmissionFailure("delete", str(backend_ref), str(exc)))
         finally:
             if service_instance is not None:
                 connect.Disconnect(service_instance)

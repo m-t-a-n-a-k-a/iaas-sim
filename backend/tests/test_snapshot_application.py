@@ -3,14 +3,18 @@ from collections.abc import Sequence
 from uuid import uuid7
 
 from iaas_sim.adapters.memory.operation import InMemoryOperationRegistry
-from iaas_sim.application.identity import BackendVirtualMachineRef
+from iaas_sim.application.identity import (
+    BackendSnapshotRef,
+    BackendVirtualMachineRef,
+    SnapshotIdentityMapping,
+)
 from iaas_sim.application.operation import BackendOperationRef
 from iaas_sim.application.snapshot import (
+    BackendSnapshotNotFound,
     ObservedSnapshot,
     SnapshotBackendFailure,
     SnapshotBackendSubmissionFailure,
     SnapshotCommandSubmissionFailure,
-    SnapshotNotFound,
     create_snapshot,
     delete_snapshot,
     get_snapshot,
@@ -22,6 +26,8 @@ from iaas_sim.domain.entity.virtual_machine import VirtualMachineId
 from iaas_sim.result import Err, Ok, Result
 
 VM_ID = VirtualMachineId(uuid7())
+SNAPSHOT_ID = SnapshotId(uuid7())
+SNAPSHOT_REF = BackendSnapshotRef("snapshot-1")
 REF = BackendVirtualMachineRef("vm-1")
 
 
@@ -32,10 +38,16 @@ class Identity:
     def get_backend_ref(self, virtual_machine_id):
         return Ok(REF)
 
+    def get_or_create_snapshot(self, backend_ref, virtual_machine_id):
+        return Ok(SNAPSHOT_ID)
+
+    def get_snapshot_mapping(self, snapshot_id):
+        return Ok(SnapshotIdentityMapping(SNAPSHOT_REF, VM_ID))
+
 
 class Port:
     def __init__(self):
-        self.snapshot = ObservedSnapshot(SnapshotId("snapshot-1"), "before", REF)
+        self.snapshot = ObservedSnapshot(SNAPSHOT_REF, "before", REF)
         self.created = []
         self.deleted = []
 
@@ -45,8 +57,8 @@ class Port:
     def get_snapshot(self, snapshot_id):
         return (
             Ok(self.snapshot)
-            if snapshot_id == self.snapshot.id
-            else Err(SnapshotNotFound(snapshot_id))
+            if snapshot_id == self.snapshot.backend_ref
+            else Err(BackendSnapshotNotFound(snapshot_id))
         )
 
     def submit_create_snapshot(self, backend_ref, name):
@@ -61,8 +73,10 @@ class Port:
 def test_snapshot_projection_uses_public_vm_id():
     port = Port()
     identity = Identity()
-    assert list_snapshots(port, identity).value[0].virtual_machine.resource_id == str(VM_ID)
-    assert get_snapshot(port, identity, port.snapshot.id).value.id == port.snapshot.id
+    assert list_snapshots(port, identity, identity).value[0].virtual_machine.resource_id == str(
+        VM_ID
+    )
+    assert get_snapshot(port, identity, identity, SNAPSHOT_ID).value.id == SNAPSHOT_ID
 
 
 def test_create_resolves_backend_ref():
@@ -90,7 +104,7 @@ def test_create_failure_maps_to_public_vm_identity():
 def test_delete_keeps_snapshot_identity():
     port = Port()
     result = delete_snapshot(
-        port, Identity(), InMemoryOperationRegistry(), OperationId(uuid7()), port.snapshot.id
+        port, Identity(), InMemoryOperationRegistry(), OperationId(uuid7()), SNAPSHOT_ID
     )
     assert isinstance(result, Ok)
-    assert port.deleted == [SnapshotId("snapshot-1")]
+    assert port.deleted == [SNAPSHOT_REF]

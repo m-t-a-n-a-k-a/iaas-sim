@@ -1,9 +1,10 @@
 from dataclasses import dataclass
 from typing import NewType
+from uuid import UUID
 
 from iaas_sim.domain.resource_reference import ResourceReference
 
-SnapshotId = NewType("SnapshotId", str)
+SnapshotId = NewType("SnapshotId", UUID)
 
 
 @dataclass(frozen=True, slots=True)
