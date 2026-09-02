@@ -8,6 +8,8 @@ from iaas_sim.application.operation import BackendOperationRef
 from iaas_sim.application.snapshot import (
     ObservedSnapshot,
     SnapshotBackendFailure,
+    SnapshotBackendSubmissionFailure,
+    SnapshotCommandSubmissionFailure,
     SnapshotNotFound,
     create_snapshot,
     delete_snapshot,
@@ -71,6 +73,18 @@ def test_create_resolves_backend_ref():
     assert isinstance(result, Ok)
     assert port.created == [(REF, "before")]
     assert result.value.target.resource_id == str(VM_ID)
+
+
+def test_create_failure_maps_to_public_vm_identity():
+    port = Port()
+    port.submit_create_snapshot = lambda backend_ref, name: Err(
+        SnapshotBackendSubmissionFailure("create", str(backend_ref), "failure for vm-1")
+    )
+    result = create_snapshot(
+        port, Identity(), InMemoryOperationRegistry(), OperationId(uuid7()), VM_ID, "before"
+    )
+    assert result == Err(SnapshotCommandSubmissionFailure("create", str(VM_ID), "failure for vm-1"))
+    assert result.error.resource_id == str(VM_ID)
 
 
 def test_delete_keeps_snapshot_identity():

@@ -38,7 +38,12 @@ class ObservedVirtualMachine:
 
 @dataclass(frozen=True, slots=True)
 class VirtualMachineNotFound:
-    virtual_machine_id: VirtualMachineId | BackendVirtualMachineRef
+    virtual_machine_id: VirtualMachineId
+
+
+@dataclass(frozen=True, slots=True)
+class VirtualMachineBackendNotFound:
+    backend_ref: BackendVirtualMachineRef
 
 
 @dataclass(frozen=True, slots=True)
@@ -49,6 +54,12 @@ class VirtualMachineBackendFailure:
 
 @dataclass(frozen=True, slots=True)
 class PowerCommandSubmissionFailure:
+    virtual_machine_id: VirtualMachineId
+    reason: str
+
+
+@dataclass(frozen=True, slots=True)
+class PowerCommandBackendSubmissionFailure:
     backend_ref: BackendVirtualMachineRef
     reason: str
 
@@ -68,10 +79,12 @@ class VirtualMachinePort(Protocol):
     ) -> Result[Sequence[ObservedVirtualMachine], VirtualMachineBackendFailure]: ...
     def get_virtual_machine(
         self, backend_ref: BackendVirtualMachineRef
-    ) -> Result[ObservedVirtualMachine, VirtualMachineNotFound | VirtualMachineBackendFailure]: ...
+    ) -> Result[
+        ObservedVirtualMachine, VirtualMachineBackendNotFound | VirtualMachineBackendFailure
+    ]: ...
     def submit_power_command(
         self, backend_ref: BackendVirtualMachineRef, command: PowerCommand
-    ) -> Result[BackendOperationRef, PowerCommandSubmissionFailure]: ...
+    ) -> Result[BackendOperationRef, PowerCommandBackendSubmissionFailure]: ...
 
 
 def _identity_error(
@@ -110,7 +123,7 @@ def get_virtual_machine(
         error = observed.error
         return Err(
             VirtualMachineNotFound(virtual_machine_id)
-            if isinstance(error, VirtualMachineNotFound)
+            if isinstance(error, VirtualMachineBackendNotFound)
             else error
         )
     return Ok(VirtualMachine(virtual_machine_id, observed.value.name, observed.value.power_state))
@@ -133,7 +146,7 @@ def execute_power_command(  # noqa: PLR0917
         error = observed.error
         return Err(
             VirtualMachineNotFound(virtual_machine_id)
-            if isinstance(error, VirtualMachineNotFound)
+            if isinstance(error, VirtualMachineBackendNotFound)
             else error
         )
     validated = validate_power_command(
@@ -143,7 +156,7 @@ def execute_power_command(  # noqa: PLR0917
         return Err(validated.error)
     submitted = port.submit_power_command(backend_ref, validated.value.command)
     if isinstance(submitted, Err):
-        return Err(submitted.error)
+        return Err(PowerCommandSubmissionFailure(virtual_machine_id, submitted.error.reason))
     tracked = TrackedOperation(
         operation_id,
         ResourceReference("virtualMachines", str(virtual_machine_id)),

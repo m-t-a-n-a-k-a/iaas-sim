@@ -12,6 +12,7 @@ from iaas_sim.application.identity import VirtualMachineIdentityPort
 from iaas_sim.application.operation import OperationRegistryPort
 from iaas_sim.application.snapshot import (
     SnapshotApplicationError,
+    SnapshotCommandSubmissionFailure,
     SnapshotNotFound,
     SnapshotPort,
     create_snapshot,
@@ -50,7 +51,14 @@ def _snapshot_resource(snapshot: Snapshot) -> dict[str, object]:
 
 def _raise(error: SnapshotApplicationError) -> NoReturn:
     if isinstance(error, SnapshotNotFound):
-        raise HTTPException(status_code=404, detail=str(error))
+        raise HTTPException(status_code=404, detail="Snapshot not found")
+    if isinstance(error, SnapshotCommandSubmissionFailure):
+        detail = (
+            "Snapshot creation submission failed"
+            if error.operation == "create"
+            else "Snapshot deletion submission failed"
+        )
+        raise HTTPException(status_code=502, detail=detail)
     raise HTTPException(status_code=502, detail=str(error))
 
 

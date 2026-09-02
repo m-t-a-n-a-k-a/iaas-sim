@@ -47,6 +47,13 @@ class SnapshotCommandSubmissionFailure:
     reason: str
 
 
+@dataclass(frozen=True, slots=True)
+class SnapshotBackendSubmissionFailure:
+    operation: str
+    resource_id: str
+    reason: str
+
+
 type SnapshotApplicationError = (
     SnapshotNotFound
     | SnapshotBackendFailure
@@ -63,10 +70,10 @@ class SnapshotPort(Protocol):
     ) -> Result[ObservedSnapshot, SnapshotNotFound | SnapshotBackendFailure]: ...
     def submit_create_snapshot(
         self, backend_ref: BackendVirtualMachineRef, name: str
-    ) -> Result[BackendOperationRef, SnapshotCommandSubmissionFailure]: ...
+    ) -> Result[BackendOperationRef, SnapshotBackendSubmissionFailure]: ...
     def submit_delete_snapshot(
         self, snapshot_id: SnapshotId
-    ) -> Result[BackendOperationRef, SnapshotCommandSubmissionFailure]: ...
+    ) -> Result[BackendOperationRef, SnapshotBackendSubmissionFailure]: ...
 
 
 def _project(
@@ -124,7 +131,11 @@ def create_snapshot(  # noqa: PLR0917
         return Err(mapped.error)
     submitted = port.submit_create_snapshot(mapped.value, name)
     if isinstance(submitted, Err):
-        return Err(submitted.error)
+        return Err(
+            SnapshotCommandSubmissionFailure(
+                "create", str(virtual_machine_id), submitted.error.reason
+            )
+        )
     return _register(
         registry,
         TrackedOperation(
@@ -148,7 +159,9 @@ def delete_snapshot(
         return Err(observed.error)
     submitted = port.submit_delete_snapshot(snapshot_id)
     if isinstance(submitted, Err):
-        return Err(submitted.error)
+        return Err(
+            SnapshotCommandSubmissionFailure("delete", str(snapshot_id), submitted.error.reason)
+        )
     return _register(
         registry,
         TrackedOperation(
