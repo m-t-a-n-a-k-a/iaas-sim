@@ -1,8 +1,9 @@
 # Architecture
 
-The Phase 2C-2 architecture remains intentionally small. VirtualMachine public identity is a
-control-plane UUIDv7 persisted by the SQLite identity adapter; vSphere MORs remain backend-only
-references. Application use cases project backend observations into Domain resources.
+The Phase 2C-3 architecture remains intentionally small. VirtualMachine and Snapshot public
+identities are control-plane UUIDv7 values persisted by the SQLite identity adapter; vSphere MORs
+remain backend-only references. Application use cases project backend observations into Domain
+resources.
 
 ## Boundary
 

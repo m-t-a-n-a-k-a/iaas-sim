@@ -44,7 +44,9 @@ app.include_router(
     create_virtual_machine_router(vsphere_adapter, sqlite_adapter, operation_registry)
 )
 app.include_router(create_operation_router(operation_registry, vsphere_adapter))
-app.include_router(create_snapshot_router(vsphere_adapter, sqlite_adapter, operation_registry))
+app.include_router(
+    create_snapshot_router(vsphere_adapter, sqlite_adapter, sqlite_adapter, operation_registry)
+)
 
 
 @app.get("/", include_in_schema=False)

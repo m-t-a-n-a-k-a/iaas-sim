@@ -10,7 +10,14 @@ import pytest
 from iaas_sim.adapters.sqlite.adapter import SQLiteAdapter
 from iaas_sim.adapters.sqlite.connection import connect_database, transaction
 from iaas_sim.adapters.sqlite.migration import SCHEMA_VERSION, migrate_database
-from iaas_sim.application.identity import BackendVirtualMachineRef, VirtualMachineIdentityNotFound
+from iaas_sim.application.identity import (
+    BackendSnapshotRef,
+    BackendVirtualMachineRef,
+    SnapshotIdentityNotFound,
+    SnapshotIdentityOwnerMismatch,
+    VirtualMachineIdentityNotFound,
+)
+from iaas_sim.domain.entity.snapshot import SnapshotId
 from iaas_sim.domain.entity.virtual_machine import VirtualMachineId
 from iaas_sim.result import Err, Ok
 
@@ -215,4 +222,70 @@ def test_invalid_stored_vm_uuid_is_typed_failure(tmp_path: Path) -> None:
         connection.commit()
     assert isinstance(
         SQLiteAdapter(path).get_or_create_by_backend_ref(BackendVirtualMachineRef("vm-bad")), Err
+    )
+
+
+def test_snapshot_identity_is_uuid7_stable_distinct_reversible_and_persistent(
+    tmp_path: Path,
+) -> None:
+    path = _database_path(tmp_path)
+    migrate_database(path)
+    adapter = SQLiteAdapter(path)
+    owner = adapter.get_or_create_by_backend_ref(BackendVirtualMachineRef("vm-owner"))
+    assert isinstance(owner, Ok)
+    first = adapter.get_or_create_snapshot(BackendSnapshotRef("snapshot-1"), owner.value)
+    repeated = adapter.get_or_create_snapshot(BackendSnapshotRef("snapshot-1"), owner.value)
+    other = adapter.get_or_create_snapshot(BackendSnapshotRef("snapshot-2"), owner.value)
+    assert isinstance(first, Ok) and first.value.version == 7
+    assert repeated == first and other != first
+    mapping = adapter.get_snapshot_mapping(first.value)
+    assert isinstance(mapping, Ok)
+    assert mapping.value.backend_ref == BackendSnapshotRef("snapshot-1")
+    assert mapping.value.virtual_machine_id == owner.value
+    assert (
+        SQLiteAdapter(path).get_or_create_snapshot(BackendSnapshotRef("snapshot-1"), owner.value)
+        == first
+    )
+
+
+def test_snapshot_owner_mismatch_is_typed_and_does_not_rewrite(tmp_path: Path) -> None:
+    path = _database_path(tmp_path)
+    migrate_database(path)
+    adapter = SQLiteAdapter(path)
+    first_owner = adapter.get_or_create_by_backend_ref(BackendVirtualMachineRef("vm-a"))
+    second_owner = adapter.get_or_create_by_backend_ref(BackendVirtualMachineRef("vm-b"))
+    assert isinstance(first_owner, Ok) and isinstance(second_owner, Ok)
+    created = adapter.get_or_create_snapshot(BackendSnapshotRef("snapshot-1"), first_owner.value)
+    assert isinstance(created, Ok)
+    mismatch = adapter.get_or_create_snapshot(BackendSnapshotRef("snapshot-1"), second_owner.value)
+    assert mismatch == Err(SnapshotIdentityOwnerMismatch(BackendSnapshotRef("snapshot-1")))
+    mapping = adapter.get_snapshot_mapping(created.value)
+    assert isinstance(mapping, Ok) and mapping.value.virtual_machine_id == first_owner.value
+
+
+def test_snapshot_unknown_and_malformed_stored_ids_are_typed_failures(tmp_path: Path) -> None:
+    path = _database_path(tmp_path)
+    migrate_database(path)
+    adapter = SQLiteAdapter(path)
+    unknown = SnapshotId(uuid7())
+    assert adapter.get_snapshot_mapping(unknown) == Err(SnapshotIdentityNotFound(unknown))
+    owner = adapter.get_or_create_by_backend_ref(BackendVirtualMachineRef("vm-owner"))
+    assert isinstance(owner, Ok)
+    with connect_database(path) as connection:
+        connection.execute(
+            "INSERT INTO snapshot (id, backend_ref, virtual_machine_id) VALUES (?, ?, ?)",
+            ("bad-id", "snapshot-bad-id", str(owner.value)),
+        )
+        connection.commit()
+    # Simulate externally corrupted storage; production connections enforce the FK.
+    with sqlite3.connect(path) as connection:
+        connection.execute(
+            "INSERT INTO snapshot (id, backend_ref, virtual_machine_id) VALUES (?, ?, ?)",
+            (str(uuid7()), "snapshot-bad-owner", "bad-owner"),
+        )
+    assert isinstance(
+        adapter.get_or_create_snapshot(BackendSnapshotRef("snapshot-bad-id"), owner.value), Err
+    )
+    assert isinstance(
+        adapter.get_or_create_snapshot(BackendSnapshotRef("snapshot-bad-owner"), owner.value), Err
     )
