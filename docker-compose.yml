@@ -16,6 +16,9 @@ services:
       OTEL_SERVICE_NAME: iaas-sim
       DEX_HEALTH_URL: http://dex:5556/healthz
       OTEL_HEALTH_URL: http://otel-lgtm:3000/api/health
+      IAAS_SIM_DB_PATH: /var/lib/iaas-sim/iaas-sim.db
+    volumes:
+      - iaas-sim-data:/var/lib/iaas-sim
     depends_on:
       vcsim:
         condition: service_started
@@ -101,3 +104,4 @@ services:
 
 volumes:
   dex-data:
+  iaas-sim-data:

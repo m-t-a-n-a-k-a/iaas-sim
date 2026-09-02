@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from typing import Final
 
 from fastapi import FastAPI
@@ -14,9 +15,14 @@ from iaas_sim.adapters.http.virtual_machine import (
     create_virtual_machine_router,
 )
 from iaas_sim.adapters.memory.operation import InMemoryOperationRegistry
+from iaas_sim.adapters.sqlite.migration import migrate_database
 from iaas_sim.adapters.vsphere.adapter import VSphereAdapter
 from iaas_sim.adapters.vsphere.health import vcsim_health_check
 from iaas_sim.bootstrap.telemetry import configure_app_telemetry
+
+DEFAULT_DATABASE_PATH: Final = "iaas-sim.db"
+
+migrate_database(os.environ.get("IAAS_SIM_DB_PATH", DEFAULT_DATABASE_PATH))
 
 app: Final[FastAPI] = FastAPI(
     title="iaas-sim",
