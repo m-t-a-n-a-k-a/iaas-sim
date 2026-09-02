@@ -7,9 +7,11 @@ from iaas_sim.adapters.vsphere.adapter import (
     snapshot_roots,
     virtual_machine_property_filter,
 )
-from iaas_sim.domain.entity.snapshot import Snapshot, SnapshotId
-from iaas_sim.domain.entity.virtual_machine import PowerState, VirtualMachine, VirtualMachineId
-from iaas_sim.domain.resource_reference import ResourceReference
+from iaas_sim.application.identity import BackendVirtualMachineRef
+from iaas_sim.application.snapshot import ObservedSnapshot
+from iaas_sim.application.virtual_machine import ObservedVirtualMachine
+from iaas_sim.domain.entity.snapshot import SnapshotId
+from iaas_sim.domain.entity.virtual_machine import PowerState
 
 
 class FakeVirtualMachine:
@@ -83,17 +85,9 @@ def test_snapshot_tree_is_projected_to_flat_domain_snapshots() -> None:
         FakeVirtualMachine(),
     )
 
-    assert project_snapshots(VirtualMachineId("vm-1"), roots) == (
-        Snapshot(
-            SnapshotId("snapshot-1"),
-            "root",
-            ResourceReference("virtualMachines", "vm-1"),
-        ),
-        Snapshot(
-            SnapshotId("snapshot-2"),
-            "child",
-            ResourceReference("virtualMachines", "vm-1"),
-        ),
+    assert project_snapshots(BackendVirtualMachineRef("vm-1"), roots) == (
+        ObservedSnapshot(SnapshotId("snapshot-1"), "root", BackendVirtualMachineRef("vm-1")),
+        ObservedSnapshot(SnapshotId("snapshot-2"), "child", BackendVirtualMachineRef("vm-1")),
     )
 
 
@@ -121,7 +115,7 @@ def test_malformed_snapshot_property_fails(
 
 def test_malformed_snapshot_tree_fails() -> None:
     with pytest.raises(ValueError, match="malformed snapshot tree"):
-        project_snapshots(VirtualMachineId("vm-1"), (FakeSnapshotNode("snapshot-1", 1),))
+        project_snapshots(BackendVirtualMachineRef("vm-1"), (FakeSnapshotNode("snapshot-1", 1),))
 
 
 @pytest.mark.parametrize(
@@ -134,11 +128,11 @@ def test_malformed_snapshot_tree_fails() -> None:
 def test_to_domain_projects_explicitly_collected_power_state(
     backend_state: str, expected: PowerState
 ) -> None:
-    projected = project_virtual_machine(VirtualMachineId("vm-1"), "demo", backend_state)
+    projected = project_virtual_machine(BackendVirtualMachineRef("vm-1"), "demo", backend_state)
 
-    assert projected == VirtualMachine(VirtualMachineId("vm-1"), "demo", expected)
+    assert projected == ObservedVirtualMachine(BackendVirtualMachineRef("vm-1"), "demo", expected)
 
 
 def test_to_domain_rejects_unsupported_backend_state() -> None:
     with pytest.raises(ValueError, match="unsupported power state: suspended"):
-        project_virtual_machine(VirtualMachineId("vm-1"), "demo", "suspended")
+        project_virtual_machine(BackendVirtualMachineRef("vm-1"), "demo", "suspended")

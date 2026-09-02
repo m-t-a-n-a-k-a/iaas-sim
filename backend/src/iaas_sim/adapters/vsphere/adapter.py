@@ -9,6 +9,7 @@ from typing import Final, Protocol, runtime_checkable
 from pyVim import connect
 from pyVmomi import VmomiSupport, vim
 
+from iaas_sim.application.identity import BackendVirtualMachineRef
 from iaas_sim.application.operation import (
     BackendOperationFailed,
     BackendOperationRef,
@@ -18,23 +19,22 @@ from iaas_sim.application.operation import (
     OperationPollingFailure,
 )
 from iaas_sim.application.snapshot import (
+    ObservedSnapshot,
     SnapshotBackendFailure,
     SnapshotCommandSubmissionFailure,
     SnapshotNotFound,
 )
 from iaas_sim.application.virtual_machine import (
+    ObservedVirtualMachine,
     PowerCommandSubmissionFailure,
     VirtualMachineBackendFailure,
     VirtualMachineNotFound,
 )
-from iaas_sim.domain.entity.snapshot import Snapshot, SnapshotId
+from iaas_sim.domain.entity.snapshot import SnapshotId
 from iaas_sim.domain.entity.virtual_machine import (
     PowerCommand,
     PowerState,
-    VirtualMachine,
-    VirtualMachineId,
 )
-from iaas_sim.domain.resource_reference import ResourceReference
 from iaas_sim.result import Err, Ok, Result
 
 logger: Final[logging.Logger] = logging.getLogger("iaas_sim.adapters.vsphere")
@@ -91,8 +91,8 @@ def new_vmodl_data_object(type_name: str) -> object:
 
 
 def project_virtual_machine(
-    virtual_machine_id: VirtualMachineId, name: str, observed_power_state: object
-) -> VirtualMachine:
+    backend_ref: BackendVirtualMachineRef, name: str, observed_power_state: object
+) -> ObservedVirtualMachine:
     """Project explicitly collected vSphere properties into the Domain entity."""
     power_state = str(observed_power_state)
     state = {
@@ -101,7 +101,7 @@ def project_virtual_machine(
     }.get(power_state)
     if state is None:
         raise ValueError(f"unsupported power state: {power_state}")
-    return VirtualMachine(virtual_machine_id, name, state)
+    return ObservedVirtualMachine(backend_ref, name, state)
 
 
 def virtual_machine_property_filter(
@@ -153,11 +153,10 @@ def snapshot_roots(
 
 
 def project_snapshots(
-    virtual_machine_id: VirtualMachineId, roots: Sequence[object]
-) -> tuple[Snapshot, ...]:
+    backend_ref: BackendVirtualMachineRef, roots: Sequence[object]
+) -> tuple[ObservedSnapshot, ...]:
     """Flatten the backend tree without exposing its hierarchy to the domain."""
-    owner = ResourceReference("virtualMachines", str(virtual_machine_id))
-    projected: list[Snapshot] = []
+    projected: list[ObservedSnapshot] = []
 
     def visit(node: object) -> None:
         name = object.__getattribute__(node, "name")
@@ -170,7 +169,7 @@ def project_snapshots(
             or not isinstance(children, Sequence)
         ):
             raise ValueError("malformed snapshot tree")
-        projected.append(Snapshot(SnapshotId(snapshot_id), name, owner))
+        projected.append(ObservedSnapshot(SnapshotId(snapshot_id), name, backend_ref))
         for child in children:
             visit(child)
 
@@ -208,7 +207,7 @@ class VSphereAdapter:
         self,
         property_collector: object,
         vm: VsphereVirtualMachineObject,
-    ) -> VirtualMachine:
+    ) -> ObservedVirtualMachine:
         if not isinstance(property_collector, VspherePropertyCollector):
             raise TypeError("vSphere property collector unavailable")
         filter_spec = virtual_machine_property_filter(vm)
@@ -225,11 +224,11 @@ class VSphereAdapter:
         if power_state is None:
             raise ValueError("VM power state unavailable")
         return project_virtual_machine(
-            VirtualMachineId(self._managed_object_id(vm)), name, power_state
+            BackendVirtualMachineRef(self._managed_object_id(vm)), name, power_state
         )
 
     def _find(
-        self, service_instance: vim.ServiceInstance, virtual_machine_id: VirtualMachineId
+        self, service_instance: vim.ServiceInstance, backend_ref: BackendVirtualMachineRef
     ) -> VsphereVirtualMachineObject | None:
         content = service_instance.RetrieveContent()
         view_manager = content.viewManager
@@ -238,14 +237,14 @@ class VSphereAdapter:
         inventory = view_manager.CreateContainerView(content.rootFolder, [vim.VirtualMachine], True)
         for vm in inventory.view:
             if isinstance(vm, VsphereVirtualMachineObject) and self._managed_object_id(vm) == str(
-                virtual_machine_id
+                backend_ref
             ):
                 return vm
         return None
 
     def list_virtual_machines(
         self,
-    ) -> Result[Sequence[VirtualMachine], VirtualMachineBackendFailure]:
+    ) -> Result[Sequence[ObservedVirtualMachine], VirtualMachineBackendFailure]:
         service_instance: vim.ServiceInstance | None = None
         try:
             connected = self._connect()
@@ -257,7 +256,7 @@ class VSphereAdapter:
             inventory = view_manager.CreateContainerView(
                 content.rootFolder, [vim.VirtualMachine], True
             )
-            vms: list[VirtualMachine] = []
+            vms: list[ObservedVirtualMachine] = []
             for vm in inventory.view:
                 if not isinstance(vm, VsphereVirtualMachineObject):
                     continue
@@ -281,17 +280,17 @@ class VSphereAdapter:
                     logger.exception("vSphere disconnect failed")
 
     def get_virtual_machine(
-        self, virtual_machine_id: VirtualMachineId
+        self, backend_ref: BackendVirtualMachineRef
     ) -> Result[
-        VirtualMachine,
+        ObservedVirtualMachine,
         VirtualMachineNotFound | VirtualMachineBackendFailure,
     ]:
         service_instance: vim.ServiceInstance | None = None
         try:
             service_instance = self._connect()
-            vm = self._find(service_instance, virtual_machine_id)
+            vm = self._find(service_instance, backend_ref)
             if vm is None:
-                return Err(VirtualMachineNotFound(virtual_machine_id))
+                return Err(VirtualMachineNotFound(backend_ref))
             content = service_instance.RetrieveContent()
             return Ok(self._project(content.propertyCollector, vm))
         except Exception as exc:
@@ -305,7 +304,7 @@ class VSphereAdapter:
                     logger.exception("vSphere disconnect failed")
 
     def submit_power_command(
-        self, virtual_machine_id: VirtualMachineId, command: PowerCommand
+        self, backend_ref: BackendVirtualMachineRef, command: PowerCommand
     ) -> Result[BackendOperationRef, PowerCommandSubmissionFailure]:
         """
         Submit async power command to vSphere backend.
@@ -320,9 +319,9 @@ class VSphereAdapter:
         service_instance: vim.ServiceInstance | None = None
         try:
             service_instance = self._connect()
-            vm = self._find(service_instance, virtual_machine_id)
+            vm = self._find(service_instance, backend_ref)
             if vm is None:
-                return Err(PowerCommandSubmissionFailure(virtual_machine_id, "not found"))
+                return Err(PowerCommandSubmissionFailure(backend_ref, "not found"))
 
             # Submit async task
             task = vm.PowerOnVM_Task() if command is PowerCommand.START else vm.PowerOffVM_Task()
@@ -334,7 +333,7 @@ class VSphereAdapter:
 
         except Exception as exc:
             logger.exception("vSphere power command submission failed")
-            return Err(PowerCommandSubmissionFailure(virtual_machine_id, str(exc)))
+            return Err(PowerCommandSubmissionFailure(backend_ref, str(exc)))
         finally:
             if service_instance is not None:
                 try:
@@ -346,7 +345,7 @@ class VSphereAdapter:
     def _snapshot_id(snapshot_object: object) -> SnapshotId:
         return SnapshotId(str(object.__getattribute__(snapshot_object, "_moId")))
 
-    def list_snapshots(self) -> Result[Sequence[Snapshot], SnapshotBackendFailure]:
+    def list_snapshots(self) -> Result[Sequence[ObservedSnapshot], SnapshotBackendFailure]:
         service_instance: vim.ServiceInstance | None = None
         try:
             service_instance = self._connect()
@@ -357,12 +356,14 @@ class VSphereAdapter:
             inventory = view_manager.CreateContainerView(
                 content.rootFolder, [vim.VirtualMachine], True
             )
-            snapshots: list[Snapshot] = []
+            snapshots: list[ObservedSnapshot] = []
             for vm in inventory.view:
                 if isinstance(vm, VsphereVirtualMachineObject):
                     roots = snapshot_roots(content.propertyCollector, vm)
                     snapshots.extend(
-                        project_snapshots(VirtualMachineId(self._managed_object_id(vm)), roots)
+                        project_snapshots(
+                            BackendVirtualMachineRef(self._managed_object_id(vm)), roots
+                        )
                     )
             return Ok(tuple(snapshots))
         except Exception as exc:
@@ -374,7 +375,7 @@ class VSphereAdapter:
 
     def get_snapshot(
         self, snapshot_id: SnapshotId
-    ) -> Result[Snapshot, SnapshotNotFound | SnapshotBackendFailure]:
+    ) -> Result[ObservedSnapshot, SnapshotNotFound | SnapshotBackendFailure]:
         listed = self.list_snapshots()
         if isinstance(listed, Err):
             return Err(listed.error)
@@ -384,25 +385,23 @@ class VSphereAdapter:
         return Err(SnapshotNotFound(snapshot_id))
 
     def submit_create_snapshot(
-        self, virtual_machine_id: VirtualMachineId, name: str
+        self, backend_ref: BackendVirtualMachineRef, name: str
     ) -> Result[BackendOperationRef, SnapshotCommandSubmissionFailure]:
         service_instance: vim.ServiceInstance | None = None
         try:
             service_instance = self._connect()
-            vm = self._find(service_instance, virtual_machine_id)
+            vm = self._find(service_instance, backend_ref)
             if not isinstance(vm, VsphereSnapshotVirtualMachine):
                 return Err(
                     SnapshotCommandSubmissionFailure(
-                        "create", str(virtual_machine_id), "virtual machine not found"
+                        "create", str(backend_ref), "virtual machine not found"
                     )
                 )
             task = vm.CreateSnapshot_Task(name, "", False, False)
             return Ok(BackendOperationRef(str(object.__getattribute__(task, "_moId"))))
         except Exception as exc:
             logger.exception("vSphere snapshot creation submission failed")
-            return Err(
-                SnapshotCommandSubmissionFailure("create", str(virtual_machine_id), str(exc))
-            )
+            return Err(SnapshotCommandSubmissionFailure("create", str(backend_ref), str(exc)))
         finally:
             if service_instance is not None:
                 connect.Disconnect(service_instance)

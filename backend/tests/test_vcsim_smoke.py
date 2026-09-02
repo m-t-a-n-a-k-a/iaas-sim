@@ -1,15 +1,20 @@
+# ruff: noqa: PLR2004
 from __future__ import annotations
 
 import os
 import ssl
 import time
+from tempfile import NamedTemporaryFile
 from urllib import error, request
-from uuid import uuid4
+from uuid import uuid4, uuid7
 
 import pytest
 from pyVim import connect
 from pyVmomi import vim
 
+from iaas_sim.adapters.memory.operation import InMemoryOperationRegistry
+from iaas_sim.adapters.sqlite.adapter import SQLiteAdapter
+from iaas_sim.adapters.sqlite.migration import migrate_database
 from iaas_sim.adapters.vsphere.adapter import VSphereAdapter
 from iaas_sim.application.operation import (
     BackendOperationFailed,
@@ -17,7 +22,19 @@ from iaas_sim.application.operation import (
     BackendOperationRunning,
     BackendOperationSucceeded,
 )
-from iaas_sim.application.snapshot import SnapshotNotFound
+from iaas_sim.application.snapshot import (
+    SnapshotNotFound,
+    create_snapshot,
+    get_snapshot,
+    list_snapshots,
+)
+from iaas_sim.application.virtual_machine import (
+    get_virtual_machine,
+    list_virtual_machines,
+    start_virtual_machine,
+    stop_virtual_machine,
+)
+from iaas_sim.domain.entity.operation import OperationId
 from iaas_sim.domain.entity.virtual_machine import PowerCommand, PowerState
 from iaas_sim.result import Err, Ok
 
@@ -91,37 +108,52 @@ def test_vcsim_retrieve_content_success() -> None:  # noqa: PLR0915
         assert content.rootFolder is not None
 
         adapter = VSphereAdapter()
-        listed = adapter.list_virtual_machines()
+        database = NamedTemporaryFile(suffix=".db", delete=False)  # noqa: SIM115
+        database.close()
+        migrate_database(database.name)
+        identity = SQLiteAdapter(database.name)
+        registry = InMemoryOperationRegistry()
+        listed = list_virtual_machines(adapter, identity)
         assert isinstance(listed, Ok)
         assert len(listed.value) >= 1
-        fetched = adapter.get_virtual_machine(listed.value[0].id)
+        public_id = listed.value[0].id
+        repeated = list_virtual_machines(adapter, identity)
+        assert isinstance(repeated, Ok) and repeated.value[0].id == public_id
+        fetched = get_virtual_machine(adapter, identity, public_id)
         assert isinstance(fetched, Ok)
-        assert fetched.value.id == listed.value[0].id
+        assert fetched.value.id == public_id and public_id.version == 7
         command = (
             PowerCommand.STOP
             if fetched.value.power_state is PowerState.RUNNING
             else PowerCommand.START
         )
-        submitted = adapter.submit_power_command(fetched.value.id, command)
+        submitted = (
+            stop_virtual_machine if command is PowerCommand.STOP else start_virtual_machine
+        )(adapter, identity, registry, OperationId(uuid7()), public_id)
         assert isinstance(submitted, Ok)
-
-        polled = adapter.get_operation_status(submitted.value)
+        tracked = registry.get(submitted.value.id)
+        assert tracked is not None
+        polled = adapter.get_operation_status(tracked.backend_ref)
         assert isinstance(polled, Ok)
         assert isinstance(
             polled.value,
             (BackendOperationRunning, BackendOperationSucceeded, BackendOperationFailed),
         )
-        wait_for_success(adapter, submitted.value)
+        wait_for_success(adapter, tracked.backend_ref)
 
         snapshot_name = f"iaas-sim-{uuid4()}"
-        created = adapter.submit_create_snapshot(fetched.value.id, snapshot_name)
+        created = create_snapshot(
+            adapter, identity, registry, OperationId(uuid7()), public_id, snapshot_name
+        )
         assert isinstance(created, Ok)
-        wait_for_success(adapter, created.value)
-        snapshots = adapter.list_snapshots()
+        created_tracked = registry.get(created.value.id)
+        assert created_tracked is not None
+        wait_for_success(adapter, created_tracked.backend_ref)
+        snapshots = list_snapshots(adapter, identity)
         assert isinstance(snapshots, Ok)
         snapshot = next(item for item in snapshots.value if item.name == snapshot_name)
-        assert snapshot.virtual_machine.resource_id == str(fetched.value.id)
-        loaded_snapshot = adapter.get_snapshot(snapshot.id)
+        assert snapshot.virtual_machine.resource_id == str(public_id)
+        loaded_snapshot = get_snapshot(adapter, identity, snapshot.id)
         assert isinstance(loaded_snapshot, Ok)
         assert loaded_snapshot.value == snapshot
         deleted = adapter.submit_delete_snapshot(snapshot.id)

@@ -1,12 +1,18 @@
+# ruff: noqa: PLR2004
 from __future__ import annotations
 
 import sqlite3
 from pathlib import Path
+from uuid import uuid7
 
 import pytest
 
+from iaas_sim.adapters.sqlite.adapter import SQLiteAdapter
 from iaas_sim.adapters.sqlite.connection import connect_database, transaction
 from iaas_sim.adapters.sqlite.migration import SCHEMA_VERSION, migrate_database
+from iaas_sim.application.identity import BackendVirtualMachineRef, VirtualMachineIdentityNotFound
+from iaas_sim.domain.entity.virtual_machine import VirtualMachineId
+from iaas_sim.result import Err, Ok
 
 
 def _database_path(tmp_path: Path) -> Path:
@@ -180,3 +186,33 @@ def test_valid_relationship_index_and_file_persistence(tmp_path: Path) -> None:
 
     assert "snapshot_virtual_machine_id_idx" in indexes
     assert persisted_owner == "vm-1"
+
+
+def test_vm_identity_mapping_is_uuid7_stable_distinct_and_reversible(tmp_path: Path) -> None:
+    path = _database_path(tmp_path)
+    migrate_database(path)
+    adapter = SQLiteAdapter(path)
+    first = adapter.get_or_create_by_backend_ref(BackendVirtualMachineRef("vm-1"))
+    repeated = adapter.get_or_create_by_backend_ref(BackendVirtualMachineRef("vm-1"))
+    other = adapter.get_or_create_by_backend_ref(BackendVirtualMachineRef("vm-2"))
+    assert isinstance(first, Ok) and first.value.version == 7
+    assert repeated == first and other != first
+    assert adapter.get_backend_ref(first.value) == Ok(BackendVirtualMachineRef("vm-1"))
+    assert (
+        SQLiteAdapter(path).get_or_create_by_backend_ref(BackendVirtualMachineRef("vm-1")) == first
+    )
+    unknown = VirtualMachineId(uuid7())
+    assert adapter.get_backend_ref(unknown) == Err(VirtualMachineIdentityNotFound(unknown))
+
+
+def test_invalid_stored_vm_uuid_is_typed_failure(tmp_path: Path) -> None:
+    path = _database_path(tmp_path)
+    migrate_database(path)
+    with connect_database(path) as connection:
+        connection.execute(
+            "INSERT INTO virtual_machine (id, backend_ref) VALUES (?, ?)", ("not-a-uuid", "vm-bad")
+        )
+        connection.commit()
+    assert isinstance(
+        SQLiteAdapter(path).get_or_create_by_backend_ref(BackendVirtualMachineRef("vm-bad")), Err
+    )

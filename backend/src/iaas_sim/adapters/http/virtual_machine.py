@@ -7,6 +7,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse
 
 from iaas_sim.application.get_operation import get_operation as load_operation
+from iaas_sim.application.identity import VirtualMachineIdentityPort
 from iaas_sim.application.operation import (
     BackendOperationPort,
     OperationNotFound,
@@ -30,6 +31,8 @@ from iaas_sim.domain.entity.virtual_machine import (
     VirtualMachineId,
 )
 from iaas_sim.result import Err, Ok
+
+UUID_VERSION_7 = 7
 
 # FastAPI registers nested handlers through decorators.
 # pyright cannot see that registration as a function access.
@@ -70,14 +73,24 @@ def _raise(error: ApplicationError) -> NoReturn:
     raise HTTPException(status_code=500, detail=str(error))
 
 
+def parse_virtual_machine_id(value: str) -> VirtualMachineId:
+    try:
+        parsed = UUID(value)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="VirtualMachine ID must be UUIDv7") from exc
+    if parsed.version != UUID_VERSION_7:
+        raise HTTPException(status_code=422, detail="VirtualMachine ID must be UUIDv7")
+    return VirtualMachineId(parsed)
+
+
 def create_virtual_machine_router(
-    port: VirtualMachinePort, registry: OperationRegistryPort
+    port: VirtualMachinePort, identity: VirtualMachineIdentityPort, registry: OperationRegistryPort
 ) -> APIRouter:
     router = APIRouter(prefix="/v1/virtualMachines", tags=["virtualMachines"])
 
     @router.get("")
     def list_vms() -> dict[str, list[dict[str, str]]]:
-        result = list_virtual_machines(port)
+        result = list_virtual_machines(port, identity)
         match result:
             case Err(error):
                 _raise(error)
@@ -86,7 +99,7 @@ def create_virtual_machine_router(
 
     @router.get("/{virtual_machine_id}")
     def get_vm(virtual_machine_id: str) -> dict[str, str]:
-        result = get_virtual_machine(port, VirtualMachineId(virtual_machine_id))
+        result = get_virtual_machine(port, identity, parse_virtual_machine_id(virtual_machine_id))
         match result:
             case Err(error):
                 _raise(error)
@@ -97,7 +110,7 @@ def create_virtual_machine_router(
     def start_vm(virtual_machine_id: str) -> JSONResponse:
         operation_id = OperationId(uuid7())
         result = start_virtual_machine(
-            port, registry, operation_id, VirtualMachineId(virtual_machine_id)
+            port, identity, registry, operation_id, parse_virtual_machine_id(virtual_machine_id)
         )
         match result:
             case Err(error):
@@ -113,7 +126,7 @@ def create_virtual_machine_router(
     def stop_vm(virtual_machine_id: str) -> JSONResponse:
         operation_id = OperationId(uuid7())
         result = stop_virtual_machine(
-            port, registry, operation_id, VirtualMachineId(virtual_machine_id)
+            port, identity, registry, operation_id, parse_virtual_machine_id(virtual_machine_id)
         )
         match result:
             case Err(error):

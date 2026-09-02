@@ -4,6 +4,13 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Protocol
 
+from iaas_sim.application.identity import (
+    BackendVirtualMachineRef,
+    VirtualMachineIdentityError,
+    VirtualMachineIdentityNotFound,
+    VirtualMachineIdentityPersistenceFailure,
+    VirtualMachineIdentityPort,
+)
 from iaas_sim.application.operation import (
     BackendOperationRef,
     OperationRegistryPort,
@@ -13,17 +20,25 @@ from iaas_sim.domain.entity.operation import Operation, OperationId, Running
 from iaas_sim.domain.entity.virtual_machine import (
     PowerCommand,
     PowerCommandError,
+    PowerState,
     VirtualMachine,
     VirtualMachineId,
     validate_power_command,
 )
 from iaas_sim.domain.resource_reference import ResourceReference
-from iaas_sim.result import Err, Ok, Result, and_then, map
+from iaas_sim.result import Err, Ok, Result
+
+
+@dataclass(frozen=True, slots=True)
+class ObservedVirtualMachine:
+    backend_ref: BackendVirtualMachineRef
+    name: str
+    power_state: PowerState
 
 
 @dataclass(frozen=True, slots=True)
 class VirtualMachineNotFound:
-    virtual_machine_id: VirtualMachineId
+    virtual_machine_id: VirtualMachineId | BackendVirtualMachineRef
 
 
 @dataclass(frozen=True, slots=True)
@@ -34,122 +49,130 @@ class VirtualMachineBackendFailure:
 
 @dataclass(frozen=True, slots=True)
 class PowerCommandSubmissionFailure:
-    virtual_machine_id: VirtualMachineId
+    backend_ref: BackendVirtualMachineRef
     reason: str
 
 
 type ApplicationError = (
     VirtualMachineNotFound
     | VirtualMachineBackendFailure
+    | VirtualMachineIdentityPersistenceFailure
     | PowerCommandError
     | PowerCommandSubmissionFailure
 )
 
 
 class VirtualMachinePort(Protocol):
-    """
-    VirtualMachine resource operations.
-
-    Separation:
-    - get_virtual_machine(): returns observed VM state
-    - submit_power_command(): issues async command, returns a backend operation reference
-    """
-
     def list_virtual_machines(
         self,
-    ) -> Result[Sequence[VirtualMachine], VirtualMachineBackendFailure]: ...
-
+    ) -> Result[Sequence[ObservedVirtualMachine], VirtualMachineBackendFailure]: ...
     def get_virtual_machine(
-        self, virtual_machine_id: VirtualMachineId
-    ) -> Result[
-        VirtualMachine,
-        VirtualMachineNotFound | VirtualMachineBackendFailure,
-    ]: ...
-
+        self, backend_ref: BackendVirtualMachineRef
+    ) -> Result[ObservedVirtualMachine, VirtualMachineNotFound | VirtualMachineBackendFailure]: ...
     def submit_power_command(
-        self, virtual_machine_id: VirtualMachineId, command: PowerCommand
+        self, backend_ref: BackendVirtualMachineRef, command: PowerCommand
     ) -> Result[BackendOperationRef, PowerCommandSubmissionFailure]: ...
 
 
+def _identity_error(
+    error: VirtualMachineIdentityError, public_id: VirtualMachineId
+) -> ApplicationError:
+    if isinstance(error, VirtualMachineIdentityNotFound):
+        return VirtualMachineNotFound(public_id)
+    return error
+
+
 def list_virtual_machines(
-    port: VirtualMachinePort,
-) -> Result[Sequence[VirtualMachine], VirtualMachineBackendFailure]:
-    return port.list_virtual_machines()
+    port: VirtualMachinePort, identity: VirtualMachineIdentityPort
+) -> Result[Sequence[VirtualMachine], ApplicationError]:
+    observed = port.list_virtual_machines()
+    if isinstance(observed, Err):
+        return Err(observed.error)
+    projected: list[VirtualMachine] = []
+    for vm in observed.value:
+        mapped = identity.get_or_create_by_backend_ref(vm.backend_ref)
+        if isinstance(mapped, Err):
+            return Err(mapped.error)
+        projected.append(VirtualMachine(mapped.value, vm.name, vm.power_state))
+    return Ok(tuple(projected))
 
 
 def get_virtual_machine(
     port: VirtualMachinePort,
+    identity: VirtualMachineIdentityPort,
     virtual_machine_id: VirtualMachineId,
 ) -> Result[VirtualMachine, ApplicationError]:
-    result = port.get_virtual_machine(virtual_machine_id)
-    if isinstance(result, Err):
-        return Err[ApplicationError](result.error)
-    return Ok(result.value)
+    mapped = identity.get_backend_ref(virtual_machine_id)
+    if isinstance(mapped, Err):
+        return Err(_identity_error(mapped.error, virtual_machine_id))
+    observed = port.get_virtual_machine(mapped.value)
+    if isinstance(observed, Err):
+        error = observed.error
+        return Err(
+            VirtualMachineNotFound(virtual_machine_id)
+            if isinstance(error, VirtualMachineNotFound)
+            else error
+        )
+    return Ok(VirtualMachine(virtual_machine_id, observed.value.name, observed.value.power_state))
 
 
-def execute_power_command(
+def execute_power_command(  # noqa: PLR0917
     port: VirtualMachinePort,
+    identity: VirtualMachineIdentityPort,
     registry: OperationRegistryPort,
     operation_id: OperationId,
     virtual_machine_id: VirtualMachineId,
     command: PowerCommand,
 ) -> Result[Operation, ApplicationError]:
-    """
-    Railway: execute async power command.
-
-    Flow:
-      1. Load observed VM state
-      2. Validate command against observed state (pure domain logic)
-      3. Submit command to backend
-      4. Create Operation tracking the submission
-
-    Each step propagates Err, stopping further execution.
-    """
-    loaded = port.get_virtual_machine(virtual_machine_id)
-    validated = and_then(
-        loaded, lambda virtual_machine: validate_power_command(virtual_machine, command)
+    mapped = identity.get_backend_ref(virtual_machine_id)
+    if isinstance(mapped, Err):
+        return Err(_identity_error(mapped.error, virtual_machine_id))
+    backend_ref = mapped.value
+    observed = port.get_virtual_machine(backend_ref)
+    if isinstance(observed, Err):
+        error = observed.error
+        return Err(
+            VirtualMachineNotFound(virtual_machine_id)
+            if isinstance(error, VirtualMachineNotFound)
+            else error
+        )
+    validated = validate_power_command(
+        VirtualMachine(virtual_machine_id, observed.value.name, observed.value.power_state), command
     )
-    submitted = and_then(
-        validated,
-        lambda accepted: port.submit_power_command(
-            accepted.virtual_machine_id,
-            accepted.command,
-        ),
+    if isinstance(validated, Err):
+        return Err(validated.error)
+    submitted = port.submit_power_command(backend_ref, validated.value.command)
+    if isinstance(submitted, Err):
+        return Err(submitted.error)
+    tracked = TrackedOperation(
+        operation_id,
+        ResourceReference("virtualMachines", str(virtual_machine_id)),
+        validated.value.command.value,
+        submitted.value,
     )
-    tracked = map(
-        submitted,
-        lambda backend_ref: TrackedOperation(
-            id=operation_id,
-            target=ResourceReference("virtualMachines", str(virtual_machine_id)),
-            action=command.value,
-            backend_ref=backend_ref,
-        ),
-    )
-
-    def register(operation: TrackedOperation) -> Result[Operation, ApplicationError]:
-        registry.add(operation)
-        return Ok(Operation(operation.id, operation.target, operation.action, Running()))
-
-    return and_then(tracked, register)
+    registry.add(tracked)
+    return Ok(Operation(tracked.id, tracked.target, tracked.action, Running()))
 
 
 def start_virtual_machine(
     port: VirtualMachinePort,
+    identity: VirtualMachineIdentityPort,
     registry: OperationRegistryPort,
     operation_id: OperationId,
     virtual_machine_id: VirtualMachineId,
 ) -> Result[Operation, ApplicationError]:
     return execute_power_command(
-        port, registry, operation_id, virtual_machine_id, PowerCommand.START
+        port, identity, registry, operation_id, virtual_machine_id, PowerCommand.START
     )
 
 
 def stop_virtual_machine(
     port: VirtualMachinePort,
+    identity: VirtualMachineIdentityPort,
     registry: OperationRegistryPort,
     operation_id: OperationId,
     virtual_machine_id: VirtualMachineId,
 ) -> Result[Operation, ApplicationError]:
     return execute_power_command(
-        port, registry, operation_id, virtual_machine_id, PowerCommand.STOP
+        port, identity, registry, operation_id, virtual_machine_id, PowerCommand.STOP
     )

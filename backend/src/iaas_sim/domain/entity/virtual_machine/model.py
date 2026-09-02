@@ -3,10 +3,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import NewType
+from uuid import UUID
 
 from iaas_sim.result import Err, Ok, Result
 
-VirtualMachineId = NewType("VirtualMachineId", str)
+VirtualMachineId = NewType("VirtualMachineId", UUID)
 
 
 class PowerState(StrEnum):

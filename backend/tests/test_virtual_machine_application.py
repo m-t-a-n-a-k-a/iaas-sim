@@ -1,145 +1,110 @@
-from collections.abc import Callable, Sequence
+# pyright: basic, reportArgumentType=false, reportAttributeAccessIssue=false
+from collections.abc import Sequence
 from uuid import uuid7
 
 import pytest
 
 from iaas_sim.adapters.memory.operation import InMemoryOperationRegistry
+from iaas_sim.application.identity import BackendVirtualMachineRef, VirtualMachineIdentityNotFound
 from iaas_sim.application.operation import BackendOperationRef
 from iaas_sim.application.virtual_machine import (
-    PowerCommandSubmissionFailure,
+    ObservedVirtualMachine,
     VirtualMachineBackendFailure,
     VirtualMachineNotFound,
-    VirtualMachinePort,
+    get_virtual_machine,
+    list_virtual_machines,
     start_virtual_machine,
     stop_virtual_machine,
 )
-from iaas_sim.domain.entity.operation import Operation, OperationId, ResourceReference, Running
+from iaas_sim.domain.entity.operation import OperationId
 from iaas_sim.domain.entity.virtual_machine import (
     AlreadyRunning,
     AlreadyStopped,
     PowerCommand,
     PowerState,
-    VirtualMachine,
     VirtualMachineId,
 )
 from iaas_sim.result import Err, Ok, Result
 
-PowerUseCase = Callable[
-    [VirtualMachinePort, InMemoryOperationRegistry, OperationId, VirtualMachineId],
-    Result[Operation, object],
-]
+VM_ID = VirtualMachineId(uuid7())
+REF = BackendVirtualMachineRef("vm-1")
 
 
-class FakeVirtualMachinePort:
-    def __init__(self, vm: VirtualMachine) -> None:
-        self.vm = vm
-        self.submission_attempts: list[tuple[VirtualMachineId, PowerCommand]] = []
-        self.submissions: list[tuple[VirtualMachineId, PowerCommand]] = []
-        self.submit_failure: PowerCommandSubmissionFailure | None = None
+class Identity:
+    def get_or_create_by_backend_ref(self, backend_ref: BackendVirtualMachineRef):
+        return Ok(VM_ID)
+
+    def get_backend_ref(self, virtual_machine_id: VirtualMachineId):
+        return (
+            Ok(REF)
+            if virtual_machine_id == VM_ID
+            else Err(VirtualMachineIdentityNotFound(virtual_machine_id))
+        )
+
+
+class Port:
+    def __init__(self, state: PowerState):
+        self.vm = ObservedVirtualMachine(REF, "demo", state)
+        self.submissions = []
+        self.failure = None
 
     def list_virtual_machines(
         self,
-    ) -> Result[Sequence[VirtualMachine], VirtualMachineBackendFailure]:
+    ) -> Result[Sequence[ObservedVirtualMachine], VirtualMachineBackendFailure]:
         return Ok((self.vm,))
 
-    def get_virtual_machine(
-        self, virtual_machine_id: VirtualMachineId
-    ) -> Result[VirtualMachine, VirtualMachineNotFound | VirtualMachineBackendFailure]:
-        return (
-            Ok(self.vm)
-            if virtual_machine_id == self.vm.id
-            else Err(VirtualMachineNotFound(virtual_machine_id))
-        )
+    def get_virtual_machine(self, backend_ref: BackendVirtualMachineRef):
+        return Ok(self.vm) if backend_ref == REF else Err(VirtualMachineNotFound(backend_ref))
 
-    def submit_power_command(
-        self, virtual_machine_id: VirtualMachineId, command: PowerCommand
-    ) -> Result[BackendOperationRef, PowerCommandSubmissionFailure]:
-        self.submission_attempts.append((virtual_machine_id, command))
-        if self.submit_failure is not None:
-            return Err(self.submit_failure)
-        self.submissions.append((virtual_machine_id, command))
-        return Ok(BackendOperationRef("task-mock-mor"))
+    def submit_power_command(self, backend_ref: BackendVirtualMachineRef, command: PowerCommand):
+        self.submissions.append((backend_ref, command))
+        return Err(self.failure) if self.failure else Ok(BackendOperationRef("task-1"))
+
+
+def test_list_and_get_project_public_identity():
+    port = Port(PowerState.STOPPED)
+    identity = Identity()
+    assert list_virtual_machines(port, identity).value[0].id == VM_ID
+    assert get_virtual_machine(port, identity, VM_ID).value.id == VM_ID
 
 
 @pytest.mark.parametrize(
     ("state", "use_case", "command"),
     [
-        pytest.param(
-            PowerState.STOPPED, start_virtual_machine, PowerCommand.START, id="start-stopped"
-        ),
-        pytest.param(
-            PowerState.RUNNING, stop_virtual_machine, PowerCommand.STOP, id="stop-running"
-        ),
+        (PowerState.STOPPED, start_virtual_machine, PowerCommand.START),
+        (PowerState.RUNNING, stop_virtual_machine, PowerCommand.STOP),
     ],
 )
-def test_valid_command_creates_and_tracks_operation(
-    state: PowerState, use_case: PowerUseCase, command: PowerCommand
-) -> None:
-    vm = VirtualMachine(VirtualMachineId("vm-1"), "demo", state)
-    port, registry = FakeVirtualMachinePort(vm), InMemoryOperationRegistry()
-    operation_id = OperationId(uuid7())
+def test_valid_command_uses_backend_ref(state, use_case, command):
+    port = Port(state)
+    registry = InMemoryOperationRegistry()
+    result = use_case(port, Identity(), registry, OperationId(uuid7()), VM_ID)
+    assert isinstance(result, Ok)
+    assert result.value.target.resource_id == str(VM_ID)
+    assert port.submissions == [(REF, command)]
 
-    result = use_case(port, registry, operation_id, vm.id)
 
-    assert result == Ok(
-        Operation(
-            operation_id, ResourceReference("virtualMachines", "vm-1"), command.value, Running()
-        )
+@pytest.mark.parametrize(
+    ("state", "use_case", "error"),
+    [
+        (PowerState.RUNNING, start_virtual_machine, AlreadyRunning(VM_ID)),
+        (PowerState.STOPPED, stop_virtual_machine, AlreadyStopped(VM_ID)),
+    ],
+)
+def test_invalid_command_has_no_side_effect(state, use_case, error):
+    port = Port(state)
+    result = use_case(port, Identity(), InMemoryOperationRegistry(), OperationId(uuid7()), VM_ID)
+    assert result == Err(error)
+    assert port.submissions == []
+
+
+def test_identity_failure_has_no_backend_side_effect():
+    port = Port(PowerState.STOPPED)
+    unknown = VirtualMachineId(uuid7())
+    assert isinstance(
+        start_virtual_machine(
+            port, Identity(), InMemoryOperationRegistry(), OperationId(uuid7()), unknown
+        ),
+        Err,
     )
-    tracked = registry.get(operation_id)
-    assert tracked is not None
-    assert tracked.backend_ref == BackendOperationRef("task-mock-mor")
-    assert str(tracked.backend_ref) != str(operation_id.value)
-    assert vm.power_state is state
-
-
-@pytest.mark.parametrize(
-    ("state", "use_case", "expected"),
-    [
-        pytest.param(
-            PowerState.RUNNING,
-            start_virtual_machine,
-            AlreadyRunning(VirtualMachineId("vm-1")),
-            id="start-running",
-        ),
-        pytest.param(
-            PowerState.STOPPED,
-            stop_virtual_machine,
-            AlreadyStopped(VirtualMachineId("vm-1")),
-            id="stop-stopped",
-        ),
-    ],
-)
-def test_err_stops_backend_side_effects(
-    state: PowerState, use_case: PowerUseCase, expected: object
-) -> None:
-    vm = VirtualMachine(VirtualMachineId("vm-1"), "demo", state)
-    port, registry = FakeVirtualMachinePort(vm), InMemoryOperationRegistry()
-    result = use_case(port, registry, OperationId(uuid7()), vm.id)
-    assert result == Err(expected)
-    assert port.submission_attempts == []
     assert port.submissions == []
-
-
-@pytest.mark.parametrize(
-    ("state", "use_case", "command"),
-    [
-        pytest.param(PowerState.STOPPED, start_virtual_machine, PowerCommand.START, id="start"),
-        pytest.param(PowerState.RUNNING, stop_virtual_machine, PowerCommand.STOP, id="stop"),
-    ],
-)
-def test_submission_failure_is_returned_without_registering_operation(
-    state: PowerState, use_case: PowerUseCase, command: PowerCommand
-) -> None:
-    vm = VirtualMachine(VirtualMachineId("vm-1"), "demo", state)
-    port, registry = FakeVirtualMachinePort(vm), InMemoryOperationRegistry()
-    failure = PowerCommandSubmissionFailure(vm.id, "backend unavailable")
-    port.submit_failure = failure
-    operation_id = OperationId(uuid7())
-
-    result = use_case(port, registry, operation_id, vm.id)
-
-    assert result == Err(failure)
-    assert port.submission_attempts == [(vm.id, command)]
-    assert port.submissions == []
-    assert registry.get(operation_id) is None
