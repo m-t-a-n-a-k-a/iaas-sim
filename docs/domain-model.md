@@ -1,13 +1,13 @@
 # Domain Model
 
-Phase 1 deliberately avoids a large business domain model.
+Phase 2A keeps the business domain deliberately narrow rather than modeling a complete cloud.
 
-The current repository focuses on a minimal operational shell:
+The implemented domain consists of:
 
-- health endpoint
-- OpenAPI generation
-- placeholder console UI
-- real pyVmomi connection verification to vcsim
-- OTLP telemetry export
+- immutable `VirtualMachine` identity, name, and observed backend power state
+- pure START/STOP command validation against that observed state
+- immutable `Operation` identity, target, action, and `Running | Succeeded | Failed` status
 
-This is intentionally not a fake VM or account domain. The purpose is to verify the architecture skeleton and startup flow before adding business logic in later phases.
+The application submits power commands asynchronously and polls their opaque backend operation references through ports. The public UUIDv7 `OperationId` remains distinct from backend identity. Operations are not persisted in Phase 2A.
+
+IAM, accounts, volumes, networks, metering, reconciliation, queues, retry, cancellation, and progress remain outside the current domain scope.

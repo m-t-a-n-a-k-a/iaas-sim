@@ -1,1 +1,1 @@
-"""Domain layer placeholder for Phase 1 architecture skeleton."""
+"""Pure domain entities and validation for Phase 2A."""

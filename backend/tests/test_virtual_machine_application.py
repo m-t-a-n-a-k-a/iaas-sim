@@ -7,7 +7,7 @@ from iaas_sim.adapters.memory.operation import InMemoryOperationRegistry
 from iaas_sim.application.operation import BackendOperationRef
 from iaas_sim.application.virtual_machine import (
     PowerCommandSubmissionFailure,
-    VirtualMachineAdapterFailure,
+    VirtualMachineBackendFailure,
     VirtualMachineNotFound,
     VirtualMachinePort,
     start_virtual_machine,
@@ -33,17 +33,18 @@ PowerUseCase = Callable[
 class FakeVirtualMachinePort:
     def __init__(self, vm: VirtualMachine) -> None:
         self.vm = vm
+        self.submission_attempts: list[tuple[VirtualMachineId, PowerCommand]] = []
         self.submissions: list[tuple[VirtualMachineId, PowerCommand]] = []
         self.submit_failure: PowerCommandSubmissionFailure | None = None
 
     def list_virtual_machines(
         self,
-    ) -> Result[Sequence[VirtualMachine], VirtualMachineAdapterFailure]:
+    ) -> Result[Sequence[VirtualMachine], VirtualMachineBackendFailure]:
         return Ok((self.vm,))
 
     def get_virtual_machine(
         self, virtual_machine_id: VirtualMachineId
-    ) -> Result[VirtualMachine, VirtualMachineNotFound | VirtualMachineAdapterFailure]:
+    ) -> Result[VirtualMachine, VirtualMachineNotFound | VirtualMachineBackendFailure]:
         return (
             Ok(self.vm)
             if virtual_machine_id == self.vm.id
@@ -53,6 +54,7 @@ class FakeVirtualMachinePort:
     def submit_power_command(
         self, virtual_machine_id: VirtualMachineId, command: PowerCommand
     ) -> Result[BackendOperationRef, PowerCommandSubmissionFailure]:
+        self.submission_attempts.append((virtual_machine_id, command))
         if self.submit_failure is not None:
             return Err(self.submit_failure)
         self.submissions.append((virtual_machine_id, command))
@@ -115,4 +117,29 @@ def test_err_stops_backend_side_effects(
     port, registry = FakeVirtualMachinePort(vm), InMemoryOperationRegistry()
     result = use_case(port, registry, OperationId(uuid7()), vm.id)
     assert result == Err(expected)
+    assert port.submission_attempts == []
     assert port.submissions == []
+
+
+@pytest.mark.parametrize(
+    ("state", "use_case", "command"),
+    [
+        pytest.param(PowerState.STOPPED, start_virtual_machine, PowerCommand.START, id="start"),
+        pytest.param(PowerState.RUNNING, stop_virtual_machine, PowerCommand.STOP, id="stop"),
+    ],
+)
+def test_submission_failure_is_returned_without_registering_operation(
+    state: PowerState, use_case: PowerUseCase, command: PowerCommand
+) -> None:
+    vm = VirtualMachine(VirtualMachineId("vm-1"), "demo", state)
+    port, registry = FakeVirtualMachinePort(vm), InMemoryOperationRegistry()
+    failure = PowerCommandSubmissionFailure(vm.id, "backend unavailable")
+    port.submit_failure = failure
+    operation_id = OperationId(uuid7())
+
+    result = use_case(port, registry, operation_id, vm.id)
+
+    assert result == Err(failure)
+    assert port.submission_attempts == [(vm.id, command)]
+    assert port.submissions == []
+    assert registry.get(operation_id) is None

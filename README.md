@@ -1,6 +1,6 @@
 # iaas-sim
 
-A minimal IaaS cloud simulator for learning, design validation, and architecture experiments. This repository intentionally keeps the Phase 1 model small and static-focused rather than building production-grade cloud features.
+A minimal IaaS cloud simulator for learning, design validation, and architecture experiments. The current Phase 2A scope adds asynchronous VirtualMachine power operations to a deliberately small control-plane architecture.
 
 ## Goals
 
@@ -33,12 +33,12 @@ VirtualMachine power commands (start, stop) are modeled as asynchronous operatio
 - **Separation of concerns**:
   - Domain validation is pure: command validation against observed state, no side effects
   - Application layer composes domain validation + backend submission
-  - Backend Task MOR (vSphere) is internal to Adapter; not exposed as public Operation ID
+  - The opaque backend operation reference is adapter-internal and is not exposed as the public Operation ID
   - Operation status is an immutable `Running | Succeeded | Failed(failure)` ADT, and targets use
     a backend-independent resource reference
 - **Failure semantics**:
   - Synchronous failure (validation/submission): HTTP 4xx/5xx response
-  - Asynchronous failure (task execution): `Operation.state = FAILED`
+  - Asynchronous failure (backend operation execution): `Operation.state = FAILED`
 
 ## Codespaces
 
@@ -69,8 +69,7 @@ make verify
 
 ## Notes
 
-- Phase 1 validates the intended execution path inside the Docker Compose network: the application connects to the vSphere simulator using the service hostname `vcsim` over HTTPS.
+- The intended execution path is inside the Docker Compose network: the application connects to the vSphere simulator using the service hostname `vcsim` over HTTPS.
 - Host-side `127.0.0.1` access is not treated as the completion criterion because it is an incidental local port-publishing path rather than the real application path.
-- This repository intentionally does not implement IAM, VM lifecycle, metering, or full cloud domain logic in Phase 1.
-- Phase 1 emphasizes architecture skeleton, infrastructure start-up, and static verification.
+- Phase 2A implements only asynchronous VM start/stop and non-durable Operation polling; IAM, metering, persistence, queues, retry, and broader cloud domain behavior remain out of scope.
 - The project uses a strict Python typing setup and architecture import rules that are enforced in CI.

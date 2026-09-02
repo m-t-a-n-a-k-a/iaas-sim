@@ -19,7 +19,7 @@ from iaas_sim.application.operation import (
 )
 from iaas_sim.application.virtual_machine import (
     PowerCommandSubmissionFailure,
-    VirtualMachineAdapterFailure,
+    VirtualMachineBackendFailure,
     VirtualMachineNotFound,
 )
 from iaas_sim.domain.entity.virtual_machine import (
@@ -166,7 +166,7 @@ class VSphereVirtualMachineAdapter:
 
     def list_virtual_machines(
         self,
-    ) -> Result[Sequence[VirtualMachine], VirtualMachineAdapterFailure]:
+    ) -> Result[Sequence[VirtualMachine], VirtualMachineBackendFailure]:
         service_instance: vim.ServiceInstance | None = None
         try:
             connected = self._connect()
@@ -174,7 +174,7 @@ class VSphereVirtualMachineAdapter:
             content = connected.RetrieveContent()
             view_manager = content.viewManager
             if view_manager is None:
-                return Err(VirtualMachineAdapterFailure("list", "view manager unavailable"))
+                return Err(VirtualMachineBackendFailure("list", "view manager unavailable"))
             inventory = view_manager.CreateContainerView(
                 content.rootFolder, [vim.VirtualMachine], True
             )
@@ -193,7 +193,7 @@ class VSphereVirtualMachineAdapter:
             return Ok(tuple(vms))
         except Exception as exc:
             logger.exception("vSphere VM listing failed")
-            return Err(VirtualMachineAdapterFailure("list", str(exc)))
+            return Err(VirtualMachineBackendFailure("list", str(exc)))
         finally:
             if service_instance is not None:
                 try:
@@ -205,7 +205,7 @@ class VSphereVirtualMachineAdapter:
         self, virtual_machine_id: VirtualMachineId
     ) -> Result[
         VirtualMachine,
-        VirtualMachineNotFound | VirtualMachineAdapterFailure,
+        VirtualMachineNotFound | VirtualMachineBackendFailure,
     ]:
         service_instance: vim.ServiceInstance | None = None
         try:
@@ -217,7 +217,7 @@ class VSphereVirtualMachineAdapter:
             return Ok(self._project(content.propertyCollector, vm))
         except Exception as exc:
             logger.exception("vSphere VM retrieval failed")
-            return Err(VirtualMachineAdapterFailure("get", str(exc)))
+            return Err(VirtualMachineBackendFailure("get", str(exc)))
         finally:
             if service_instance is not None:
                 try:

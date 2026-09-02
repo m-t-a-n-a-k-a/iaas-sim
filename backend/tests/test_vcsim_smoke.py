@@ -10,6 +10,12 @@ from pyVim import connect
 from pyVmomi import vim
 
 from iaas_sim.adapters.vsphere.virtual_machine import VSphereVirtualMachineAdapter
+from iaas_sim.application.operation import (
+    BackendOperationFailed,
+    BackendOperationRunning,
+    BackendOperationSucceeded,
+)
+from iaas_sim.domain.entity.virtual_machine import PowerCommand, PowerState
 from iaas_sim.result import Ok
 
 
@@ -77,6 +83,20 @@ def test_vcsim_retrieve_content_success() -> None:
         fetched = adapter.get_virtual_machine(listed.value[0].id)
         assert isinstance(fetched, Ok)
         assert fetched.value.id == listed.value[0].id
+        command = (
+            PowerCommand.STOP
+            if fetched.value.power_state is PowerState.RUNNING
+            else PowerCommand.START
+        )
+        submitted = adapter.submit_power_command(fetched.value.id, command)
+        assert isinstance(submitted, Ok)
+
+        polled = adapter.get_operation_status(submitted.value)
+        assert isinstance(polled, Ok)
+        assert isinstance(
+            polled.value,
+            (BackendOperationRunning, BackendOperationSucceeded, BackendOperationFailed),
+        )
     finally:
         if service_instance is not None:
             connect.Disconnect(service_instance)

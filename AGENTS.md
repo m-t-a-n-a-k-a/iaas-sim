@@ -1,6 +1,6 @@
 # AGENTS.md
 
-This repository follows strict Phase 1 constraints.
+This repository implements Phase 2A asynchronous power operations while keeping the architecture small and explicit.
 
 Architecture:
 
@@ -24,12 +24,12 @@ API:
 
 Domain filesystem:
 
-- `domain/entity/{entity}/` is the baseline structure for future domain entities
-- Domain model is intentionally empty in Phase 1
+- `domain/entity/{entity}/` is the baseline structure for domain entities
+- The implemented domain is limited to VirtualMachine power state/command validation and Operation status
 
 Rules:
 
-1. Do not implement fake business domain models in Phase 1.
+1. Do not add speculative business domain models or proceed beyond the requested phase.
 2. Keep the architecture small and explicit.
 3. Use immutable data and pure functions where domain logic exists.
 4. Keep adapters and infrastructure outside the domain layer.
@@ -57,21 +57,20 @@ Future design notes:
 - Unknown OIDC identity: do not create JIT Principal
 - Metering: Compute Usage = VM RUNNING time; Volume Usage = provisioned GiB × existence time
 - Metering and OpenTelemetry metrics are separate concerns
-- Long-running operations are modeled later as asynchronous command + Operation Resource, not implemented in Phase 1
 
 Phase 2A: Asynchronous Power Operations
 
 - VirtualMachine.power_state represents **observed backend state**, not desired state
-- Power operations (START, STOP) are asynchronous via vSphere PowerOnVM_Task / PowerOffVM_Task
+- Power operations (START, STOP) are asynchronous; backend-specific submission details remain in adapters
 - Domain validation (validate_power_command) is pure: checks command validity against observed state, no side effects
-- Operation entity tracks async execution: OperationId (UUIDv7) is control-plane identity, distinct from backend Task MOR
+- Operation entity tracks async execution: OperationId (UUIDv7) is control-plane identity, distinct from its opaque backend operation reference
 - Command acceptance (HTTP 202 Accepted) ≠ command completion
   - Synchronous failure: validation error or submission failure → HTTP 4xx/5xx
-  - Asynchronous failure: Task execution failure → Operation.state = FAILED
+  - Asynchronous failure: backend operation failure → Operation.state = FAILED
 - No concurrent power operations policy yet (collect requirements first)
-- Backend Task identity (vSphere MOR) is Adapter-internal; public API uses Operation.id only
+- Backend operation identity is adapter-internal; public API uses Operation.id only
 - No transitional power states (POWERING_ON/OFF); Operation.state tracks execution
-- Phase 2A does not persist Operations; backend task state is polled on GET /operations/{id}
+- Phase 2A does not persist Operations; backend operation state is polled on GET /operations/{id}
 
 Result / Railway policy:
 
