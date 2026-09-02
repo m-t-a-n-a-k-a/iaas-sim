@@ -1,15 +1,43 @@
-from iaas_sim.application.operation import TrackedOperation
-from iaas_sim.domain.entity.operation import OperationId
+from iaas_sim.application.operation import (
+    BackendOperationRef,
+    OperationNotFound,
+    OperationPersistenceFailure,
+    OperationStoreError,
+    StoredOperation,
+)
+from iaas_sim.domain.entity.operation import Operation, OperationId, Running
+from iaas_sim.result import Err, Ok, Result
 
 
-class InMemoryOperationRegistry:
-    """Process-local Phase 2A correlation registry; intentionally not durable."""
+class InMemoryOperationStore:
+    """Faithful test fake for persistent Operation Store semantics."""
 
     def __init__(self) -> None:
-        self._operations: dict[OperationId, TrackedOperation] = {}
+        self._operations: dict[OperationId, StoredOperation] = {}
 
-    def add(self, operation: TrackedOperation) -> None:
-        self._operations[operation.id] = operation
+    def create_running(
+        self, operation: Operation, backend_ref: BackendOperationRef
+    ) -> Result[Operation, OperationPersistenceFailure]:
+        if not isinstance(operation.status, Running):
+            return Err(OperationPersistenceFailure("create", "operation is not running"))
+        if operation.id in self._operations:
+            return Err(OperationPersistenceFailure("create", "operation already exists"))
+        self._operations[operation.id] = StoredOperation(operation, backend_ref)
+        return Ok(operation)
 
-    def get(self, operation_id: OperationId) -> TrackedOperation | None:
-        return self._operations.get(operation_id)
+    def get(self, operation_id: OperationId) -> Result[StoredOperation, OperationStoreError]:
+        stored = self._operations.get(operation_id)
+        return Err(OperationNotFound(operation_id)) if stored is None else Ok(stored)
+
+    def complete(
+        self, operation: Operation
+    ) -> Result[Operation, OperationNotFound | OperationPersistenceFailure]:
+        stored = self._operations.get(operation.id)
+        if stored is None:
+            return Err(OperationNotFound(operation.id))
+        if stored.operation.is_terminal():
+            return Ok(stored.operation)
+        if not operation.is_terminal():
+            return Err(OperationPersistenceFailure("complete", "status is not terminal"))
+        self._operations[operation.id] = StoredOperation(operation, stored.backend_ref)
+        return Ok(operation)

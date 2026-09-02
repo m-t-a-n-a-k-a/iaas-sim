@@ -14,9 +14,9 @@ from iaas_sim.adapters.http.virtual_machine import (
     create_operation_router,
     create_virtual_machine_router,
 )
-from iaas_sim.adapters.memory.operation import InMemoryOperationRegistry
 from iaas_sim.adapters.sqlite.adapter import SQLiteAdapter
 from iaas_sim.adapters.sqlite.migration import migrate_database
+from iaas_sim.adapters.sqlite.operation import SQLiteOperationStore
 from iaas_sim.adapters.vsphere.adapter import VSphereAdapter
 from iaas_sim.adapters.vsphere.health import vcsim_health_check
 from iaas_sim.bootstrap.telemetry import configure_app_telemetry
@@ -38,14 +38,12 @@ app.include_router(create_health_router({"vcsim": vcsim_health_check}))
 app.include_router(openapi_router)
 app.include_router(ui_router)
 vsphere_adapter = VSphereAdapter()
-operation_registry = InMemoryOperationRegistry()
+operation_store = SQLiteOperationStore(database_path)
 sqlite_adapter = SQLiteAdapter(database_path)
+app.include_router(create_virtual_machine_router(vsphere_adapter, sqlite_adapter, operation_store))
+app.include_router(create_operation_router(operation_store, vsphere_adapter))
 app.include_router(
-    create_virtual_machine_router(vsphere_adapter, sqlite_adapter, operation_registry)
-)
-app.include_router(create_operation_router(operation_registry, vsphere_adapter))
-app.include_router(
-    create_snapshot_router(vsphere_adapter, sqlite_adapter, sqlite_adapter, operation_registry)
+    create_snapshot_router(vsphere_adapter, sqlite_adapter, sqlite_adapter, operation_store)
 )
 
 

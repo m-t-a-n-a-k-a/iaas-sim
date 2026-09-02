@@ -13,7 +13,7 @@ from iaas_sim.application.identity import (
     VirtualMachineIdentityNotFound,
     VirtualMachineIdentityPort,
 )
-from iaas_sim.application.operation import OperationRegistryPort
+from iaas_sim.application.operation import OperationPersistenceFailure, OperationStorePort
 from iaas_sim.application.snapshot import (
     SnapshotApplicationError,
     SnapshotBackendFailure,
@@ -67,6 +67,8 @@ def parse_snapshot_id(value: str) -> SnapshotId:
 
 
 def _raise(error: SnapshotApplicationError) -> NoReturn:
+    if isinstance(error, OperationPersistenceFailure):
+        raise HTTPException(status_code=500, detail="Operation persistence failed")
     if isinstance(error, SnapshotNotFound):
         raise HTTPException(status_code=404, detail="Snapshot not found")
     if isinstance(error, SnapshotCommandSubmissionFailure):
@@ -87,7 +89,7 @@ def create_snapshot_router(
     port: SnapshotPort,
     vm_identity: VirtualMachineIdentityPort,
     snapshot_identity: SnapshotIdentityPort,
-    registry: OperationRegistryPort,
+    store: OperationStorePort,
 ) -> APIRouter:
     router = APIRouter(prefix="/v1/snapshots", tags=["snapshots"])
 
@@ -112,7 +114,7 @@ def create_snapshot_router(
         result = create_snapshot(
             port,
             vm_identity,
-            registry,
+            store,
             OperationId(uuid7()),
             parse_virtual_machine_id(body.virtualMachine.id),
             body.name,
@@ -130,7 +132,7 @@ def create_snapshot_router(
     @router.delete("/{snapshot_id}")
     def delete_resource(snapshot_id: str) -> JSONResponse:
         result = delete_snapshot(
-            port, snapshot_identity, registry, OperationId(uuid7()), parse_snapshot_id(snapshot_id)
+            port, snapshot_identity, store, OperationId(uuid7()), parse_snapshot_id(snapshot_id)
         )
         match result:
             case Err(error):

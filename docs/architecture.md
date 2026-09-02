@@ -1,6 +1,6 @@
 # Architecture
 
-The Phase 2C-3 architecture remains intentionally small. VirtualMachine and Snapshot public
+The Phase 2C-4 architecture remains intentionally small. VirtualMachine and Snapshot public
 identities are control-plane UUIDv7 values persisted by the SQLite identity adapter; vSphere MORs
 remain backend-only references. Application use cases project backend observations into Domain
 resources.
@@ -9,7 +9,7 @@ resources.
 
 - Domain: pure logic and immutable state modeling. No I/O and no framework imports.
 - Application: orchestration and port-based use cases for VM and Snapshot queries, async command submission, and Operation polling.
-- Adapters: concrete HTTP, vSphere, in-memory Operation registry, telemetry, and external integrations.
+- Adapters: concrete HTTP, vSphere, SQLite identity and Operation stores, telemetry, and external integrations.
 - Bootstrap: composition root and dependency wiring.
 
 ## Constraints
@@ -25,4 +25,9 @@ resources.
 - Prefer railway-oriented composition over nested if/else or try/except chains for expected failure propagation.
 - Convert external exceptions only at adapter boundaries into typed Err values; unexpected runtime failures remain handled at the process boundary.
 
-Operations remain process-local and non-durable. Snapshot hierarchy is flattened inside the vSphere adapter; the domain and API expose independent top-level Snapshot resources.
+Operations are durable control-plane Resources. Their public state and safe failure reason are
+stored in SQLite, while the opaque backend reference remains internal correlation data. GET polls
+the backend only for persisted RUNNING Operations and compare-and-set persists terminal state
+before exposing it. There is intentionally no worker or retry: a submitted backend task can be
+orphaned if the following database insert fails, and an unqueried completed task remains RUNNING
+until the next read-through reconciliation.

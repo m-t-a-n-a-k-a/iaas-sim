@@ -11,7 +11,8 @@ from iaas_sim.application.identity import VirtualMachineIdentityPort
 from iaas_sim.application.operation import (
     BackendOperationPort,
     OperationNotFound,
-    OperationRegistryPort,
+    OperationPersistenceFailure,
+    OperationStorePort,
 )
 from iaas_sim.application.virtual_machine import (
     ApplicationError,
@@ -65,6 +66,8 @@ def operation_resource(operation: Operation) -> dict[str, object]:
 
 
 def _raise(error: ApplicationError) -> NoReturn:
+    if isinstance(error, OperationPersistenceFailure):
+        raise HTTPException(status_code=500, detail="Operation persistence failed")
     if isinstance(error, VirtualMachineNotFound):
         raise HTTPException(status_code=404, detail="VirtualMachine not found")
     if isinstance(error, (AlreadyRunning, AlreadyStopped)):
@@ -89,7 +92,7 @@ def parse_virtual_machine_id(value: str) -> VirtualMachineId:
 
 
 def create_virtual_machine_router(
-    port: VirtualMachinePort, identity: VirtualMachineIdentityPort, registry: OperationRegistryPort
+    port: VirtualMachinePort, identity: VirtualMachineIdentityPort, store: OperationStorePort
 ) -> APIRouter:
     router = APIRouter(prefix="/v1/virtualMachines", tags=["virtualMachines"])
 
@@ -115,7 +118,7 @@ def create_virtual_machine_router(
     def start_vm(virtual_machine_id: str) -> JSONResponse:
         operation_id = OperationId(uuid7())
         result = start_virtual_machine(
-            port, identity, registry, operation_id, parse_virtual_machine_id(virtual_machine_id)
+            port, identity, store, operation_id, parse_virtual_machine_id(virtual_machine_id)
         )
         match result:
             case Err(error):
@@ -131,7 +134,7 @@ def create_virtual_machine_router(
     def stop_vm(virtual_machine_id: str) -> JSONResponse:
         operation_id = OperationId(uuid7())
         result = stop_virtual_machine(
-            port, identity, registry, operation_id, parse_virtual_machine_id(virtual_machine_id)
+            port, identity, store, operation_id, parse_virtual_machine_id(virtual_machine_id)
         )
         match result:
             case Err(error):
@@ -146,19 +149,19 @@ def create_virtual_machine_router(
     return router
 
 
-def create_operation_router(
-    registry: OperationRegistryPort, backend: BackendOperationPort
-) -> APIRouter:
+def create_operation_router(store: OperationStorePort, backend: BackendOperationPort) -> APIRouter:
     """Operations API: read-only endpoint for tracking async commands."""
 
     router = APIRouter(prefix="/v1/operations", tags=["operations"])
 
     @router.get("/{operation_id}")
     def get_operation(operation_id: UUID) -> dict[str, object]:
-        result = load_operation(registry, backend, OperationId(operation_id))
+        result = load_operation(store, backend, OperationId(operation_id))
         if isinstance(result, Err):
             if isinstance(result.error, OperationNotFound):
                 raise HTTPException(status_code=404, detail="Operation not found")
+            if isinstance(result.error, OperationPersistenceFailure):
+                raise HTTPException(status_code=500, detail="Operation persistence failed")
             raise HTTPException(status_code=502, detail="Operation polling failed")
         return operation_resource(result.value)
 

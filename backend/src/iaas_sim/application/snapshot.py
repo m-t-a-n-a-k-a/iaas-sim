@@ -17,8 +17,8 @@ from iaas_sim.application.identity import (
 )
 from iaas_sim.application.operation import (
     BackendOperationRef,
-    OperationRegistryPort,
-    TrackedOperation,
+    OperationPersistenceFailure,
+    OperationStorePort,
 )
 from iaas_sim.domain.entity.operation import Operation, OperationId, Running
 from iaas_sim.domain.entity.snapshot import Snapshot, SnapshotId
@@ -72,6 +72,7 @@ type SnapshotApplicationError = (
     | VirtualMachineIdentityNotFound
     | SnapshotIdentityPersistenceFailure
     | SnapshotIdentityOwnerMismatch
+    | OperationPersistenceFailure
 )
 
 
@@ -157,17 +158,19 @@ def get_snapshot(  # noqa: PLR0911
     )
 
 
-def _register(
-    registry: OperationRegistryPort, tracked: TrackedOperation
+def _persist(
+    store: OperationStorePort, operation: Operation, backend_ref: BackendOperationRef
 ) -> Result[Operation, SnapshotApplicationError]:
-    registry.add(tracked)
-    return Ok(Operation(tracked.id, tracked.target, tracked.action, Running()))
+    persisted = store.create_running(operation, backend_ref)
+    if isinstance(persisted, Err):
+        return Err(persisted.error)
+    return Ok(persisted.value)
 
 
 def create_snapshot(  # noqa: PLR0917
     port: SnapshotPort,
     identity: VirtualMachineIdentityPort,
-    registry: OperationRegistryPort,
+    store: OperationStorePort,
     operation_id: OperationId,
     virtual_machine_id: VirtualMachineId,
     name: str,
@@ -182,21 +185,22 @@ def create_snapshot(  # noqa: PLR0917
                 "create", str(virtual_machine_id), submitted.error.reason
             )
         )
-    return _register(
-        registry,
-        TrackedOperation(
+    return _persist(
+        store,
+        Operation(
             operation_id,
             ResourceReference("virtualMachines", str(virtual_machine_id)),
             "CREATE_SNAPSHOT",
-            submitted.value,
+            Running(),
         ),
+        submitted.value,
     )
 
 
 def delete_snapshot(
     port: SnapshotPort,
     identity: SnapshotIdentityPort,
-    registry: OperationRegistryPort,
+    store: OperationStorePort,
     operation_id: OperationId,
     snapshot_id: SnapshotId,
 ) -> Result[Operation, SnapshotApplicationError]:
@@ -210,12 +214,13 @@ def delete_snapshot(
         return Err(
             SnapshotCommandSubmissionFailure("delete", str(snapshot_id), submitted.error.reason)
         )
-    return _register(
-        registry,
-        TrackedOperation(
+    return _persist(
+        store,
+        Operation(
             operation_id,
             ResourceReference("snapshots", str(snapshot_id)),
             "DELETE_SNAPSHOT",
-            submitted.value,
+            Running(),
         ),
+        submitted.value,
     )

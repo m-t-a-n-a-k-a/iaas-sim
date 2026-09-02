@@ -12,13 +12,13 @@ import pytest
 from pyVim import connect
 from pyVmomi import vim
 
-from iaas_sim.adapters.memory.operation import InMemoryOperationRegistry
 from iaas_sim.adapters.sqlite.adapter import SQLiteAdapter
 from iaas_sim.adapters.sqlite.migration import migrate_database
+from iaas_sim.adapters.sqlite.operation import SQLiteOperationStore
 from iaas_sim.adapters.vsphere.adapter import VSphereAdapter
+from iaas_sim.application.get_operation import get_operation as reconcile_operation
 from iaas_sim.application.operation import (
     BackendOperationFailed,
-    BackendOperationRef,
     BackendOperationRunning,
     BackendOperationSucceeded,
 )
@@ -35,20 +35,22 @@ from iaas_sim.application.virtual_machine import (
     start_virtual_machine,
     stop_virtual_machine,
 )
-from iaas_sim.domain.entity.operation import OperationId
+from iaas_sim.domain.entity.operation import OperationId, Succeeded
 from iaas_sim.domain.entity.virtual_machine import PowerCommand, PowerState
 from iaas_sim.result import Err, Ok
 
 
-def wait_for_success(adapter: VSphereAdapter, backend_ref: BackendOperationRef) -> None:
+def reconcile_until_success(
+    database_path: str, adapter: VSphereAdapter, operation_id: OperationId
+) -> None:
+    """Recreate the store while polling to exercise durable read-through behavior."""
     for _ in range(50):
-        polled = adapter.get_operation_status(backend_ref)
-        assert isinstance(polled, Ok)
-        if isinstance(polled.value, BackendOperationSucceeded):
+        result = reconcile_operation(SQLiteOperationStore(database_path), adapter, operation_id)
+        assert isinstance(result, Ok)
+        if isinstance(result.value.status, Succeeded):
             return
-        assert isinstance(polled.value, BackendOperationRunning), polled.value
         time.sleep(0.1)
-    pytest.fail("vcsim task did not complete within five seconds")
+    pytest.fail("vcsim Operation did not reconcile within five seconds")
 
 
 @pytest.mark.skipif(
@@ -113,7 +115,7 @@ def test_vcsim_retrieve_content_success() -> None:  # noqa: PLR0915
         database.close()
         migrate_database(database.name)
         identity = SQLiteAdapter(database.name)
-        registry = InMemoryOperationRegistry()
+        store = SQLiteOperationStore(database.name)
         listed = list_virtual_machines(adapter, identity)
         assert isinstance(listed, Ok)
         assert len(listed.value) >= 1
@@ -130,26 +132,26 @@ def test_vcsim_retrieve_content_success() -> None:  # noqa: PLR0915
         )
         submitted = (
             stop_virtual_machine if command is PowerCommand.STOP else start_virtual_machine
-        )(adapter, identity, registry, OperationId(uuid7()), public_id)
+        )(adapter, identity, store, OperationId(uuid7()), public_id)
         assert isinstance(submitted, Ok)
-        tracked = registry.get(submitted.value.id)
-        assert tracked is not None
-        polled = adapter.get_operation_status(tracked.backend_ref)
+        tracked = store.get(submitted.value.id)
+        assert isinstance(tracked, Ok)
+        polled = adapter.get_operation_status(tracked.value.backend_ref)
         assert isinstance(polled, Ok)
         assert isinstance(
             polled.value,
             (BackendOperationRunning, BackendOperationSucceeded, BackendOperationFailed),
         )
-        wait_for_success(adapter, tracked.backend_ref)
+        reconcile_until_success(database.name, adapter, submitted.value.id)
 
         snapshot_name = f"iaas-sim-{uuid4()}"
         created = create_snapshot(
-            adapter, identity, registry, OperationId(uuid7()), public_id, snapshot_name
+            adapter, identity, store, OperationId(uuid7()), public_id, snapshot_name
         )
         assert isinstance(created, Ok)
-        created_tracked = registry.get(created.value.id)
-        assert created_tracked is not None
-        wait_for_success(adapter, created_tracked.backend_ref)
+        created_tracked = store.get(created.value.id)
+        assert isinstance(created_tracked, Ok)
+        reconcile_until_success(database.name, adapter, created.value.id)
         snapshots = list_snapshots(adapter, identity, identity)
         assert isinstance(snapshots, Ok)
         snapshot = next(item for item in snapshots.value if item.name == snapshot_name)
@@ -163,11 +165,11 @@ def test_vcsim_retrieve_content_success() -> None:  # noqa: PLR0915
         loaded_snapshot = get_snapshot(adapter, identity, identity, snapshot.id)
         assert isinstance(loaded_snapshot, Ok)
         assert loaded_snapshot.value == snapshot
-        deleted = delete_snapshot(adapter, identity, registry, OperationId(uuid7()), snapshot.id)
+        deleted = delete_snapshot(adapter, identity, store, OperationId(uuid7()), snapshot.id)
         assert isinstance(deleted, Ok)
-        deleted_tracked = registry.get(deleted.value.id)
-        assert deleted_tracked is not None
-        wait_for_success(adapter, deleted_tracked.backend_ref)
+        deleted_tracked = store.get(deleted.value.id)
+        assert isinstance(deleted_tracked, Ok)
+        reconcile_until_success(database.name, adapter, deleted.value.id)
         assert get_snapshot(adapter, identity, identity, snapshot.id) == Err(
             SnapshotNotFound(snapshot.id)
         )
