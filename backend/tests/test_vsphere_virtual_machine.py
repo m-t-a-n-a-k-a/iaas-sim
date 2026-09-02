@@ -17,9 +17,14 @@ class FakeVirtualMachine:
 
 def test_property_filter_requests_only_projection_fields() -> None:
     filter_spec = virtual_machine_property_filter(FakeVirtualMachine())
+    filter_attributes = vars(filter_spec)
+    property_specs = filter_attributes["propSet"]
+    assert isinstance(property_specs, list)
+    assert len(property_specs) == 1
+    property_attributes = vars(property_specs[0])
+    property_paths = property_attributes["pathSet"]
 
-    assert len(filter_spec.propSet) == 1
-    assert list(filter_spec.propSet[0].pathSet) == ["name", "summary.runtime.powerState"]
+    assert property_paths == ["name", "summary.runtime.powerState"]
 
 
 @pytest.mark.parametrize(

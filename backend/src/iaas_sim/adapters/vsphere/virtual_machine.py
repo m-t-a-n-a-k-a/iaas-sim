@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from typing import Final, Protocol, runtime_checkable
 
 from pyVim import connect
-from pyVmomi import vim, vmodl
+from pyVmomi import VmomiSupport, vim
 
 from iaas_sim.application.operation import (
     BackendOperationFailed,
@@ -45,6 +45,32 @@ class VsphereVirtualMachineObject(Protocol):
     def PowerOffVM_Task(self) -> object: ...
 
 
+class VsphereDynamicProperty(Protocol):
+    name: str
+    val: object
+
+
+class VsphereObjectContent(Protocol):
+    propSet: Sequence[VsphereDynamicProperty]
+
+
+@runtime_checkable
+class VspherePropertyCollector(Protocol):
+    def RetrieveContents(self, specSet: list[object]) -> Sequence[VsphereObjectContent]: ...
+
+
+@runtime_checkable
+class VmodlDataObjectFactory(Protocol):
+    def __call__(self) -> object: ...
+
+
+def new_vmodl_data_object(type_name: str) -> object:
+    data_object_type = VmomiSupport.GetVmodlType(type_name)
+    if not isinstance(data_object_type, VmodlDataObjectFactory):
+        raise TypeError(f"VMODL type is not a data object: {type_name}")
+    return data_object_type()
+
+
 def project_virtual_machine(
     virtual_machine_id: VirtualMachineId, name: str, observed_power_state: object
 ) -> VirtualMachine:
@@ -61,16 +87,16 @@ def project_virtual_machine(
 
 def virtual_machine_property_filter(
     vm: VsphereVirtualMachineObject,
-) -> vmodl.query.PropertyCollector.FilterSpec:
+) -> object:
     """Request only the VM properties needed by the control-plane projection."""
-    object_spec = vmodl.query.PropertyCollector.ObjectSpec()
+    object_spec = new_vmodl_data_object("vmodl.query.PropertyCollector.ObjectSpec")
     object.__setattr__(object_spec, "obj", vm)
-    property_spec = vmodl.query.PropertyCollector.PropertySpec()
-    property_spec.type = vim.VirtualMachine
+    property_spec = new_vmodl_data_object("vmodl.query.PropertyCollector.PropertySpec")
+    object.__setattr__(property_spec, "type", vim.VirtualMachine)
     object.__setattr__(property_spec, "pathSet", ["name", "summary.runtime.powerState"])
-    filter_spec = vmodl.query.PropertyCollector.FilterSpec()
-    filter_spec.objectSet = [object_spec]
-    filter_spec.propSet = [property_spec]
+    filter_spec = new_vmodl_data_object("vmodl.query.PropertyCollector.FilterSpec")
+    object.__setattr__(filter_spec, "objectSet", [object_spec])
+    object.__setattr__(filter_spec, "propSet", [property_spec])
     return filter_spec
 
 
@@ -101,9 +127,11 @@ class VSphereVirtualMachineAdapter:
 
     def _project(
         self,
-        property_collector: vmodl.query.PropertyCollector,
+        property_collector: object,
         vm: VsphereVirtualMachineObject,
     ) -> VirtualMachine:
+        if not isinstance(property_collector, VspherePropertyCollector):
+            raise TypeError("vSphere property collector unavailable")
         filter_spec = virtual_machine_property_filter(vm)
         contents = property_collector.RetrieveContents([filter_spec])
         if len(contents) != 1:
