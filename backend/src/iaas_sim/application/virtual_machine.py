@@ -17,7 +17,7 @@ from iaas_sim.domain.entity.virtual_machine import (
     VirtualMachineId,
     validate_power_command,
 )
-from iaas_sim.result import Err, Ok, Result
+from iaas_sim.result import Err, Ok, Result, and_then, map
 
 
 @dataclass(frozen=True, slots=True)
@@ -104,30 +104,29 @@ def execute_power_command(
 
     Each step propagates Err, stopping further execution.
     """
-    # Step 1: Load observed state
     loaded = port.get_virtual_machine(virtual_machine_id)
-    if isinstance(loaded, Err):
-        return Err[ApplicationError](loaded.error)
-
-    # Step 2: Domain validation (pure, no side effects)
-    validated = validate_power_command(loaded.value, command)
-    if isinstance(validated, Err):
-        return Err[ApplicationError](validated.error)
-
-    # Step 3: Submit to backend
-    submitted = port.submit_power_command(virtual_machine_id, command)
-    if isinstance(submitted, Err):
-        return Err[ApplicationError](submitted.error)
-
-    # Step 4: Create Operation resource
-    tracked = TrackedOperation(
-        id=operation_id,
-        target=ResourceReference("virtualMachines", str(virtual_machine_id)),
-        action=command.value,
-        backend_ref=submitted.value,
+    validated = and_then(
+        loaded, lambda virtual_machine: validate_power_command(virtual_machine, command)
     )
-    registry.add(tracked)
-    return Ok(Operation(tracked.id, tracked.target, tracked.action, Running()))
+    submitted = and_then(
+        validated,
+        lambda _virtual_machine: port.submit_power_command(virtual_machine_id, command),
+    )
+    tracked = map(
+        submitted,
+        lambda backend_ref: TrackedOperation(
+            id=operation_id,
+            target=ResourceReference("virtualMachines", str(virtual_machine_id)),
+            action=command.value,
+            backend_ref=backend_ref,
+        ),
+    )
+
+    def register(operation: TrackedOperation) -> Result[Operation, ApplicationError]:
+        registry.add(operation)
+        return Ok(Operation(operation.id, operation.target, operation.action, Running()))
+
+    return and_then(tracked, register)
 
 
 def start_virtual_machine(
