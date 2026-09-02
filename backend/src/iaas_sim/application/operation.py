@@ -3,7 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import NewType, Protocol
 
-from iaas_sim.domain.entity.operation import OperationId, ResourceReference
+from iaas_sim.domain.entity.operation import OperationId
+from iaas_sim.domain.resource_reference import ResourceReference
 from iaas_sim.result import Result
 
 BackendOperationRef = NewType("BackendOperationRef", str)

@@ -3,20 +3,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 from uuid import UUID
 
+from iaas_sim.domain.resource_reference import ResourceReference
+
 
 @dataclass(frozen=True, slots=True)
 class OperationId:
     """Control-plane identity, independent of any backend operation identity."""
 
     value: UUID
-
-
-@dataclass(frozen=True, slots=True)
-class ResourceReference:
-    """Minimal reference to a top-level API resource."""
-
-    resource_type: str
-    resource_id: str
 
 
 @dataclass(frozen=True, slots=True)

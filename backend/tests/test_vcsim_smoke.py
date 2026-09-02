@@ -4,19 +4,33 @@ import os
 import ssl
 import time
 from urllib import error, request
+from uuid import uuid4
 
 import pytest
 from pyVim import connect
 from pyVmomi import vim
 
-from iaas_sim.adapters.vsphere.virtual_machine import VSphereAdapter
+from iaas_sim.adapters.vsphere.adapter import VSphereAdapter
 from iaas_sim.application.operation import (
     BackendOperationFailed,
+    BackendOperationRef,
     BackendOperationRunning,
     BackendOperationSucceeded,
 )
+from iaas_sim.application.snapshot import SnapshotNotFound
 from iaas_sim.domain.entity.virtual_machine import PowerCommand, PowerState
-from iaas_sim.result import Ok
+from iaas_sim.result import Err, Ok
+
+
+def wait_for_success(adapter: VSphereAdapter, backend_ref: BackendOperationRef) -> None:
+    for _ in range(50):
+        polled = adapter.get_operation_status(backend_ref)
+        assert isinstance(polled, Ok)
+        if isinstance(polled.value, BackendOperationSucceeded):
+            return
+        assert isinstance(polled.value, BackendOperationRunning), polled.value
+        time.sleep(0.1)
+    pytest.fail("vcsim task did not complete within five seconds")
 
 
 @pytest.mark.skipif(
@@ -26,7 +40,7 @@ from iaas_sim.result import Ok
         "the real vcsim connectivity check."
     ),
 )
-def test_vcsim_retrieve_content_success() -> None:
+def test_vcsim_retrieve_content_success() -> None:  # noqa: PLR0915
     host = os.getenv("VSPHERE_HOST", "vcsim")
     port = int(os.getenv("VSPHERE_PORT", "8989"))
     scheme = os.getenv("VSPHERE_SCHEME", "https")
@@ -97,6 +111,23 @@ def test_vcsim_retrieve_content_success() -> None:
             polled.value,
             (BackendOperationRunning, BackendOperationSucceeded, BackendOperationFailed),
         )
+        wait_for_success(adapter, submitted.value)
+
+        snapshot_name = f"iaas-sim-{uuid4()}"
+        created = adapter.submit_create_snapshot(fetched.value.id, snapshot_name)
+        assert isinstance(created, Ok)
+        wait_for_success(adapter, created.value)
+        snapshots = adapter.list_snapshots()
+        assert isinstance(snapshots, Ok)
+        snapshot = next(item for item in snapshots.value if item.name == snapshot_name)
+        assert snapshot.virtual_machine.resource_id == str(fetched.value.id)
+        loaded_snapshot = adapter.get_snapshot(snapshot.id)
+        assert isinstance(loaded_snapshot, Ok)
+        assert loaded_snapshot.value == snapshot
+        deleted = adapter.submit_delete_snapshot(snapshot.id)
+        assert isinstance(deleted, Ok)
+        wait_for_success(adapter, deleted.value)
+        assert adapter.get_snapshot(snapshot.id) == Err(SnapshotNotFound(snapshot.id))
     finally:
         if service_instance is not None:
             connect.Disconnect(service_instance)
