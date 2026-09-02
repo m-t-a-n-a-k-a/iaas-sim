@@ -54,21 +54,9 @@ class VsphereVirtualMachineObject(Protocol):
 
 @runtime_checkable
 class VsphereSnapshotVirtualMachine(VsphereVirtualMachineObject, Protocol):
-    snapshot: object
-
     def CreateSnapshot_Task(
         self, name: str, description: str, memory: bool, quiesce: bool
     ) -> object: ...
-
-
-class VsphereSnapshotTree(Protocol):
-    name: str
-    snapshot: object
-    childSnapshotList: Sequence[VsphereSnapshotTree]
-
-
-class VsphereSnapshotInfo(Protocol):
-    rootSnapshotList: Sequence[VsphereSnapshotTree]
 
 
 @runtime_checkable
@@ -129,6 +117,66 @@ def virtual_machine_property_filter(
     object.__setattr__(filter_spec, "objectSet", [object_spec])
     object.__setattr__(filter_spec, "propSet", [property_spec])
     return filter_spec
+
+
+def snapshot_property_filter(vm: VsphereVirtualMachineObject) -> object:
+    """Request only the snapshot tree roots needed by the flat projection."""
+    object_spec = new_vmodl_data_object("vmodl.query.PropertyCollector.ObjectSpec")
+    object.__setattr__(object_spec, "obj", vm)
+    property_spec = new_vmodl_data_object("vmodl.query.PropertyCollector.PropertySpec")
+    object.__setattr__(property_spec, "type", vim.VirtualMachine)
+    object.__setattr__(property_spec, "pathSet", ["snapshot.rootSnapshotList"])
+    filter_spec = new_vmodl_data_object("vmodl.query.PropertyCollector.FilterSpec")
+    object.__setattr__(filter_spec, "objectSet", [object_spec])
+    object.__setattr__(filter_spec, "propSet", [property_spec])
+    return filter_spec
+
+
+def snapshot_roots(
+    property_collector: object, vm: VsphereVirtualMachineObject
+) -> tuple[object, ...]:
+    """Load snapshot roots explicitly; an absent property means no snapshots."""
+    if not isinstance(property_collector, VspherePropertyCollector):
+        raise TypeError("vSphere property collector unavailable")
+    contents = property_collector.RetrieveContents([snapshot_property_filter(vm)])
+    if len(contents) != 1:
+        raise ValueError("snapshot properties unavailable")
+    properties = contents[0].propSet
+    if len(properties) == 0:
+        return ()
+    if len(properties) != 1 or properties[0].name != "snapshot.rootSnapshotList":
+        raise ValueError("malformed snapshot properties")
+    roots = properties[0].val
+    if not isinstance(roots, Sequence):
+        raise ValueError("malformed snapshot roots")
+    return tuple(roots)
+
+
+def project_snapshots(
+    virtual_machine_id: VirtualMachineId, roots: Sequence[object]
+) -> tuple[Snapshot, ...]:
+    """Flatten the backend tree without exposing its hierarchy to the domain."""
+    owner = ResourceReference("virtualMachines", str(virtual_machine_id))
+    projected: list[Snapshot] = []
+
+    def visit(node: object) -> None:
+        name = object.__getattribute__(node, "name")
+        snapshot_object = object.__getattribute__(node, "snapshot")
+        children = object.__getattribute__(node, "childSnapshotList")
+        snapshot_id = object.__getattribute__(snapshot_object, "_moId")
+        if (
+            not isinstance(name, str)
+            or not isinstance(snapshot_id, str)
+            or not isinstance(children, Sequence)
+        ):
+            raise ValueError("malformed snapshot tree")
+        projected.append(Snapshot(SnapshotId(snapshot_id), name, owner))
+        for child in children:
+            visit(child)
+
+    for root in roots:
+        visit(root)
+    return tuple(projected)
 
 
 class VSphereAdapter:
@@ -298,30 +346,6 @@ class VSphereAdapter:
     def _snapshot_id(snapshot_object: object) -> SnapshotId:
         return SnapshotId(str(object.__getattribute__(snapshot_object, "_moId")))
 
-    def _snapshot_entries(self, vm: VsphereSnapshotVirtualMachine) -> tuple[Snapshot, ...]:
-        snapshot_info = vm.snapshot
-        if snapshot_info is None:
-            return ()
-        roots = object.__getattribute__(snapshot_info, "rootSnapshotList")
-        if not isinstance(roots, Sequence):
-            raise ValueError("snapshot roots unavailable")
-        owner = ResourceReference("virtualMachines", self._managed_object_id(vm))
-        projected: list[Snapshot] = []
-
-        def visit(node: object) -> None:
-            name = object.__getattribute__(node, "name")
-            snapshot_object = object.__getattribute__(node, "snapshot")
-            children = object.__getattribute__(node, "childSnapshotList")
-            if not isinstance(name, str) or not isinstance(children, Sequence):
-                raise ValueError("malformed snapshot tree")
-            projected.append(Snapshot(self._snapshot_id(snapshot_object), name, owner))
-            for child in children:
-                visit(child)
-
-        for root in roots:
-            visit(root)
-        return tuple(projected)
-
     def list_snapshots(self) -> Result[Sequence[Snapshot], SnapshotBackendFailure]:
         service_instance: vim.ServiceInstance | None = None
         try:
@@ -335,8 +359,11 @@ class VSphereAdapter:
             )
             snapshots: list[Snapshot] = []
             for vm in inventory.view:
-                if isinstance(vm, VsphereSnapshotVirtualMachine):
-                    snapshots.extend(self._snapshot_entries(vm))
+                if isinstance(vm, VsphereVirtualMachineObject):
+                    roots = snapshot_roots(content.propertyCollector, vm)
+                    snapshots.extend(
+                        project_snapshots(VirtualMachineId(self._managed_object_id(vm)), roots)
+                    )
             return Ok(tuple(snapshots))
         except Exception as exc:
             logger.exception("vSphere snapshot listing failed")
@@ -391,10 +418,9 @@ class VSphereAdapter:
             vm_content.rootFolder, [vim.VirtualMachine], True
         )
         for vm in inventory.view:
-            if not isinstance(vm, VsphereSnapshotVirtualMachine) or vm.snapshot is None:
+            if not isinstance(vm, VsphereVirtualMachineObject):
                 continue
-            roots = object.__getattribute__(vm.snapshot, "rootSnapshotList")
-            pending: list[object] = list(roots)
+            pending = list(snapshot_roots(vm_content.propertyCollector, vm))
             while pending:
                 node = pending.pop()
                 snapshot_object = object.__getattribute__(node, "snapshot")
