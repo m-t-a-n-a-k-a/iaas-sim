@@ -16,6 +16,7 @@ from iaas_sim.application.operation import (
 from iaas_sim.application.virtual_machine import (
     ApplicationError,
     PowerCommandSubmissionFailure,
+    VirtualMachineBackendFailure,
     VirtualMachineNotFound,
     VirtualMachinePort,
     get_virtual_machine,
@@ -72,7 +73,9 @@ def _raise(error: ApplicationError) -> NoReturn:
         raise HTTPException(
             status_code=502, detail="VirtualMachine power command submission failed"
         )
-    raise HTTPException(status_code=500, detail=str(error))
+    if isinstance(error, VirtualMachineBackendFailure):
+        raise HTTPException(status_code=502, detail="VirtualMachine backend request failed")
+    raise HTTPException(status_code=500, detail="VirtualMachine internal error")
 
 
 def parse_virtual_machine_id(value: str) -> VirtualMachineId:
@@ -155,8 +158,8 @@ def create_operation_router(
         result = load_operation(registry, backend, OperationId(operation_id))
         if isinstance(result, Err):
             if isinstance(result.error, OperationNotFound):
-                raise HTTPException(status_code=404, detail=str(result.error))
-            raise HTTPException(status_code=502, detail=str(result.error))
+                raise HTTPException(status_code=404, detail="Operation not found")
+            raise HTTPException(status_code=502, detail="Operation polling failed")
         return operation_resource(result.value)
 
     return router

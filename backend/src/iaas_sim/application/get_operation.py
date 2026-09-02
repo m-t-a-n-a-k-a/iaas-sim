@@ -17,6 +17,8 @@ from iaas_sim.domain.entity.operation import (
 )
 from iaas_sim.result import Err, Ok, Result
 
+BACKEND_OPERATION_FAILURE_REASON = "Backend operation failed"
+
 
 def get_operation(
     registry: OperationRegistryPort,
@@ -36,6 +38,6 @@ def get_operation(
             status = Running()
         case BackendOperationSucceeded():
             status = Succeeded()
-        case BackendOperationFailed(reason):
-            status = Failed(OperationFailure(reason))
+        case BackendOperationFailed():
+            status = Failed(OperationFailure(BACKEND_OPERATION_FAILURE_REASON))
     return Ok(Operation(tracked.id, tracked.target, tracked.action, status))
