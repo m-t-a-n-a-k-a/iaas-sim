@@ -10,7 +10,12 @@ from iaas_sim.adapters.http.snapshot import create_snapshot_router
 from iaas_sim.adapters.memory.operation import InMemoryOperationRegistry
 from iaas_sim.application.identity import BackendVirtualMachineRef
 from iaas_sim.application.operation import BackendOperationRef
-from iaas_sim.application.snapshot import ObservedSnapshot, SnapshotBackendFailure, SnapshotNotFound
+from iaas_sim.application.snapshot import (
+    ObservedSnapshot,
+    SnapshotBackendFailure,
+    SnapshotBackendSubmissionFailure,
+    SnapshotNotFound,
+)
 from iaas_sim.domain.entity.snapshot import SnapshotId
 from iaas_sim.domain.entity.virtual_machine import VirtualMachineId
 from iaas_sim.result import Err, Ok, Result
@@ -50,9 +55,11 @@ class Port:
         return Ok(BackendOperationRef("task-delete"))
 
 
-def client():
+def client(port=None):
     app = FastAPI()
-    app.include_router(create_snapshot_router(Port(), Identity(), InMemoryOperationRegistry()))
+    app.include_router(
+        create_snapshot_router(port or Port(), Identity(), InMemoryOperationRegistry())
+    )
     return TestClient(app)
 
 
@@ -84,3 +91,20 @@ def test_create_rejects_mor_and_uuid4():
             ).status_code
             == 422
         )
+
+
+def test_create_failure_does_not_expose_backend_identity():
+    port = Port()
+    port.submit_create_snapshot = lambda backend_ref, name: Err(
+        SnapshotBackendSubmissionFailure("create", str(backend_ref), "failure for vm-1")
+    )
+    response = client(port).post(
+        "/v1/snapshots",
+        json={
+            "name": "new",
+            "virtualMachine": {"resourceType": "virtualMachines", "id": str(VM_ID)},
+        },
+    )
+    assert response.status_code == 502
+    assert response.json() == {"detail": "Snapshot creation submission failed"}
+    assert "vm-1" not in response.text

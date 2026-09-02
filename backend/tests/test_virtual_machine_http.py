@@ -20,8 +20,9 @@ from iaas_sim.application.operation import (
 )
 from iaas_sim.application.virtual_machine import (
     ObservedVirtualMachine,
+    PowerCommandBackendSubmissionFailure,
     VirtualMachineBackendFailure,
-    VirtualMachineNotFound,
+    VirtualMachineBackendNotFound,
 )
 from iaas_sim.domain.entity.virtual_machine import PowerCommand, PowerState, VirtualMachineId
 from iaas_sim.result import Err, Ok, Result
@@ -55,7 +56,9 @@ class Port:
         return Ok((self.vm,))
 
     def get_virtual_machine(self, backend_ref):
-        return Ok(self.vm) if backend_ref == REF else Err(VirtualMachineNotFound(backend_ref))
+        if backend_ref == REF:
+            return Ok(self.vm)
+        return Err(VirtualMachineBackendNotFound(backend_ref))
 
     def submit_power_command(self, backend_ref, command):
         self.submitted.append((backend_ref, command))
@@ -100,3 +103,23 @@ def test_validation_error_does_not_submit():
     port.vm = ObservedVirtualMachine(REF, "demo", PowerState.RUNNING)
     assert client_for(port).post(f"/v1/virtualMachines/{VM_ID}:start").status_code == 409
     assert port.submitted == []
+
+
+def test_power_submission_failure_does_not_expose_backend_identity():
+    port = Port()
+    port.submit_power_command = lambda backend_ref, command: Err(
+        PowerCommandBackendSubmissionFailure(backend_ref, "failure for vm-1")
+    )
+    response = client_for(port).post(f"/v1/virtualMachines/{VM_ID}:start")
+    assert response.status_code == 502
+    assert response.json() == {"detail": "VirtualMachine power command submission failed"}
+    assert "vm-1" not in response.text
+
+
+def test_backend_not_found_does_not_expose_backend_identity():
+    port = Port()
+    port.get_virtual_machine = lambda backend_ref: Err(VirtualMachineBackendNotFound(backend_ref))
+    response = client_for(port).get(f"/v1/virtualMachines/{VM_ID}")
+    assert response.status_code == 404
+    assert response.json() == {"detail": "VirtualMachine not found"}
+    assert "vm-1" not in response.text

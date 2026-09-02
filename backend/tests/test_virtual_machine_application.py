@@ -9,7 +9,10 @@ from iaas_sim.application.identity import BackendVirtualMachineRef, VirtualMachi
 from iaas_sim.application.operation import BackendOperationRef
 from iaas_sim.application.virtual_machine import (
     ObservedVirtualMachine,
+    PowerCommandBackendSubmissionFailure,
+    PowerCommandSubmissionFailure,
     VirtualMachineBackendFailure,
+    VirtualMachineBackendNotFound,
     VirtualMachineNotFound,
     get_virtual_machine,
     list_virtual_machines,
@@ -54,7 +57,9 @@ class Port:
         return Ok((self.vm,))
 
     def get_virtual_machine(self, backend_ref: BackendVirtualMachineRef):
-        return Ok(self.vm) if backend_ref == REF else Err(VirtualMachineNotFound(backend_ref))
+        if backend_ref == REF:
+            return Ok(self.vm)
+        return Err(VirtualMachineBackendNotFound(backend_ref))
 
     def submit_power_command(self, backend_ref: BackendVirtualMachineRef, command: PowerCommand):
         self.submissions.append((backend_ref, command))
@@ -108,3 +113,21 @@ def test_identity_failure_has_no_backend_side_effect():
         Err,
     )
     assert port.submissions == []
+
+
+def test_backend_not_found_maps_to_public_identity():
+    port = Port(PowerState.STOPPED)
+    port.get_virtual_machine = lambda backend_ref: Err(VirtualMachineBackendNotFound(backend_ref))
+    result = get_virtual_machine(port, Identity(), VM_ID)
+    assert result == Err(VirtualMachineNotFound(VM_ID))
+    assert "vm-1" not in str(result)
+
+
+def test_power_submission_failure_maps_to_public_identity():
+    port = Port(PowerState.STOPPED)
+    port.failure = PowerCommandBackendSubmissionFailure(REF, "failure for vm-1")
+    result = start_virtual_machine(
+        port, Identity(), InMemoryOperationRegistry(), OperationId(uuid7()), VM_ID
+    )
+    assert result == Err(PowerCommandSubmissionFailure(VM_ID, "failure for vm-1"))
+    assert result.error.virtual_machine_id == VM_ID

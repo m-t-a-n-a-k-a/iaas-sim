@@ -21,14 +21,14 @@ from iaas_sim.application.operation import (
 from iaas_sim.application.snapshot import (
     ObservedSnapshot,
     SnapshotBackendFailure,
-    SnapshotCommandSubmissionFailure,
+    SnapshotBackendSubmissionFailure,
     SnapshotNotFound,
 )
 from iaas_sim.application.virtual_machine import (
     ObservedVirtualMachine,
-    PowerCommandSubmissionFailure,
+    PowerCommandBackendSubmissionFailure,
     VirtualMachineBackendFailure,
-    VirtualMachineNotFound,
+    VirtualMachineBackendNotFound,
 )
 from iaas_sim.domain.entity.snapshot import SnapshotId
 from iaas_sim.domain.entity.virtual_machine import (
@@ -283,14 +283,14 @@ class VSphereAdapter:
         self, backend_ref: BackendVirtualMachineRef
     ) -> Result[
         ObservedVirtualMachine,
-        VirtualMachineNotFound | VirtualMachineBackendFailure,
+        VirtualMachineBackendNotFound | VirtualMachineBackendFailure,
     ]:
         service_instance: vim.ServiceInstance | None = None
         try:
             service_instance = self._connect()
             vm = self._find(service_instance, backend_ref)
             if vm is None:
-                return Err(VirtualMachineNotFound(backend_ref))
+                return Err(VirtualMachineBackendNotFound(backend_ref))
             content = service_instance.RetrieveContent()
             return Ok(self._project(content.propertyCollector, vm))
         except Exception as exc:
@@ -305,13 +305,13 @@ class VSphereAdapter:
 
     def submit_power_command(
         self, backend_ref: BackendVirtualMachineRef, command: PowerCommand
-    ) -> Result[BackendOperationRef, PowerCommandSubmissionFailure]:
+    ) -> Result[BackendOperationRef, PowerCommandBackendSubmissionFailure]:
         """
         Submit async power command to vSphere backend.
 
         Returns:
             Ok(BackendOperationRef): opaque backend operation reference
-            Err(PowerCommandSubmissionFailure): submission failed
+            Err(PowerCommandBackendSubmissionFailure): submission failed
 
         Does not block on Task completion.
         Backend Task MOR is not exposed as public Operation ID.
@@ -321,7 +321,7 @@ class VSphereAdapter:
             service_instance = self._connect()
             vm = self._find(service_instance, backend_ref)
             if vm is None:
-                return Err(PowerCommandSubmissionFailure(backend_ref, "not found"))
+                return Err(PowerCommandBackendSubmissionFailure(backend_ref, "not found"))
 
             # Submit async task
             task = vm.PowerOnVM_Task() if command is PowerCommand.START else vm.PowerOffVM_Task()
@@ -333,7 +333,7 @@ class VSphereAdapter:
 
         except Exception as exc:
             logger.exception("vSphere power command submission failed")
-            return Err(PowerCommandSubmissionFailure(backend_ref, str(exc)))
+            return Err(PowerCommandBackendSubmissionFailure(backend_ref, str(exc)))
         finally:
             if service_instance is not None:
                 try:
@@ -386,14 +386,14 @@ class VSphereAdapter:
 
     def submit_create_snapshot(
         self, backend_ref: BackendVirtualMachineRef, name: str
-    ) -> Result[BackendOperationRef, SnapshotCommandSubmissionFailure]:
+    ) -> Result[BackendOperationRef, SnapshotBackendSubmissionFailure]:
         service_instance: vim.ServiceInstance | None = None
         try:
             service_instance = self._connect()
             vm = self._find(service_instance, backend_ref)
             if not isinstance(vm, VsphereSnapshotVirtualMachine):
                 return Err(
-                    SnapshotCommandSubmissionFailure(
+                    SnapshotBackendSubmissionFailure(
                         "create", str(backend_ref), "virtual machine not found"
                     )
                 )
@@ -401,7 +401,7 @@ class VSphereAdapter:
             return Ok(BackendOperationRef(str(object.__getattribute__(task, "_moId"))))
         except Exception as exc:
             logger.exception("vSphere snapshot creation submission failed")
-            return Err(SnapshotCommandSubmissionFailure("create", str(backend_ref), str(exc)))
+            return Err(SnapshotBackendSubmissionFailure("create", str(backend_ref), str(exc)))
         finally:
             if service_instance is not None:
                 connect.Disconnect(service_instance)
@@ -432,14 +432,14 @@ class VSphereAdapter:
 
     def submit_delete_snapshot(
         self, snapshot_id: SnapshotId
-    ) -> Result[BackendOperationRef, SnapshotCommandSubmissionFailure]:
+    ) -> Result[BackendOperationRef, SnapshotBackendSubmissionFailure]:
         service_instance: vim.ServiceInstance | None = None
         try:
             service_instance = self._connect()
             snapshot = self._find_snapshot_object(service_instance, snapshot_id)
             if snapshot is None:
                 return Err(
-                    SnapshotCommandSubmissionFailure(
+                    SnapshotBackendSubmissionFailure(
                         "delete", str(snapshot_id), "snapshot not found"
                     )
                 )
@@ -449,7 +449,7 @@ class VSphereAdapter:
             return Ok(BackendOperationRef(str(object.__getattribute__(task, "_moId"))))
         except Exception as exc:
             logger.exception("vSphere snapshot deletion submission failed")
-            return Err(SnapshotCommandSubmissionFailure("delete", str(snapshot_id), str(exc)))
+            return Err(SnapshotBackendSubmissionFailure("delete", str(snapshot_id), str(exc)))
         finally:
             if service_instance is not None:
                 connect.Disconnect(service_instance)

@@ -65,11 +65,13 @@ def operation_resource(operation: Operation) -> dict[str, object]:
 
 def _raise(error: ApplicationError) -> NoReturn:
     if isinstance(error, VirtualMachineNotFound):
-        raise HTTPException(status_code=404, detail=str(error))
+        raise HTTPException(status_code=404, detail="VirtualMachine not found")
     if isinstance(error, (AlreadyRunning, AlreadyStopped)):
         raise HTTPException(status_code=409, detail=str(error))
     if isinstance(error, PowerCommandSubmissionFailure):
-        raise HTTPException(status_code=502, detail=str(error))
+        raise HTTPException(
+            status_code=502, detail="VirtualMachine power command submission failed"
+        )
     raise HTTPException(status_code=500, detail=str(error))
 
 
