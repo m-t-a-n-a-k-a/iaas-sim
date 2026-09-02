@@ -100,7 +100,7 @@ def virtual_machine_property_filter(
     return filter_spec
 
 
-class VSphereVirtualMachineAdapter:
+class VSphereAdapter:
     """
     vSphere Adapter: control-plane ↔ backend translation.
 

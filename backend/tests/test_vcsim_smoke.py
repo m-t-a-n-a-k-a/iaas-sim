@@ -9,7 +9,7 @@ import pytest
 from pyVim import connect
 from pyVmomi import vim
 
-from iaas_sim.adapters.vsphere.virtual_machine import VSphereVirtualMachineAdapter
+from iaas_sim.adapters.vsphere.virtual_machine import VSphereAdapter
 from iaas_sim.application.operation import (
     BackendOperationFailed,
     BackendOperationRunning,
@@ -76,7 +76,7 @@ def test_vcsim_retrieve_content_success() -> None:
         assert len(vms) >= 1
         assert content.rootFolder is not None
 
-        adapter = VSphereVirtualMachineAdapter()
+        adapter = VSphereAdapter()
         listed = adapter.list_virtual_machines()
         assert isinstance(listed, Ok)
         assert len(listed.value) >= 1
