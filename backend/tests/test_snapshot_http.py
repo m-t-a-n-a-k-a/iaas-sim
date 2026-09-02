@@ -8,7 +8,11 @@ from fastapi.testclient import TestClient
 
 from iaas_sim.adapters.http.snapshot import create_snapshot_router
 from iaas_sim.adapters.memory.operation import InMemoryOperationRegistry
-from iaas_sim.application.identity import BackendVirtualMachineRef
+from iaas_sim.application.identity import (
+    BackendVirtualMachineRef,
+    VirtualMachineIdentityNotFound,
+    VirtualMachineIdentityPersistenceFailure,
+)
 from iaas_sim.application.operation import BackendOperationRef
 from iaas_sim.application.snapshot import (
     ObservedSnapshot,
@@ -108,3 +112,55 @@ def test_create_failure_does_not_expose_backend_identity():
     assert response.status_code == 502
     assert response.json() == {"detail": "Snapshot creation submission failed"}
     assert "vm-1" not in response.text
+
+
+def test_backend_failure_does_not_expose_backend_reason():
+    port = Port()
+    port.list_snapshots = lambda: Err(
+        SnapshotBackendFailure("list", "snapshot-42 belongs to vm-123")
+    )
+    response = client(port).get("/v1/snapshots")
+    assert response.status_code == 502
+    assert response.json() == {"detail": "Snapshot backend request failed"}
+    assert "snapshot-42" not in response.text
+    assert "vm-123" not in response.text
+
+
+def test_identity_persistence_failure_does_not_expose_backend_reason():
+    class FailingIdentity(Identity):
+        def get_or_create_by_backend_ref(self, backend_ref):
+            return Err(
+                VirtualMachineIdentityPersistenceFailure(
+                    "get-or-create", "database failed for snapshot-42 vm-123"
+                )
+            )
+
+    app = FastAPI()
+    app.include_router(
+        create_snapshot_router(Port(), FailingIdentity(), InMemoryOperationRegistry())
+    )
+    response = TestClient(app).get("/v1/snapshots")
+    assert response.status_code == 500
+    assert response.json() == {"detail": "Snapshot internal error"}
+    assert "snapshot-42" not in response.text
+    assert "vm-123" not in response.text
+
+
+def test_identity_not_found_uses_stable_public_message():
+    class MissingIdentity(Identity):
+        def get_backend_ref(self, virtual_machine_id):
+            return Err(VirtualMachineIdentityNotFound(virtual_machine_id))
+
+    app = FastAPI()
+    app.include_router(
+        create_snapshot_router(Port(), MissingIdentity(), InMemoryOperationRegistry())
+    )
+    response = TestClient(app).post(
+        "/v1/snapshots",
+        json={
+            "name": "new",
+            "virtualMachine": {"resourceType": "virtualMachines", "id": str(VM_ID)},
+        },
+    )
+    assert response.status_code == 404
+    assert response.json() == {"detail": "VirtualMachine not found"}

@@ -3,7 +3,7 @@ from uuid import uuid7
 import pytest
 
 from iaas_sim.adapters.memory.operation import InMemoryOperationRegistry
-from iaas_sim.application.get_operation import get_operation
+from iaas_sim.application.get_operation import BACKEND_OPERATION_FAILURE_REASON, get_operation
 from iaas_sim.application.operation import (
     BackendOperationFailed,
     BackendOperationRef,
@@ -46,8 +46,8 @@ class FakeBackend:
         pytest.param(BackendOperationRunning(), Running(), id="running"),
         pytest.param(BackendOperationSucceeded(), Succeeded(), id="succeeded"),
         pytest.param(
-            BackendOperationFailed("boom"),
-            Failed(OperationFailure("boom")),
+            BackendOperationFailed("task-17 vm-123 internal backend failure"),
+            Failed(OperationFailure(BACKEND_OPERATION_FAILURE_REASON)),
             id="failed-with-required-error",
         ),
     ],

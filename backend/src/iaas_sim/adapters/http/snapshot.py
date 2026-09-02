@@ -8,10 +8,14 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from iaas_sim.adapters.http.virtual_machine import operation_resource, parse_virtual_machine_id
-from iaas_sim.application.identity import VirtualMachineIdentityPort
+from iaas_sim.application.identity import (
+    VirtualMachineIdentityNotFound,
+    VirtualMachineIdentityPort,
+)
 from iaas_sim.application.operation import OperationRegistryPort
 from iaas_sim.application.snapshot import (
     SnapshotApplicationError,
+    SnapshotBackendFailure,
     SnapshotCommandSubmissionFailure,
     SnapshotNotFound,
     SnapshotPort,
@@ -59,7 +63,11 @@ def _raise(error: SnapshotApplicationError) -> NoReturn:
             else "Snapshot deletion submission failed"
         )
         raise HTTPException(status_code=502, detail=detail)
-    raise HTTPException(status_code=502, detail=str(error))
+    if isinstance(error, SnapshotBackendFailure):
+        raise HTTPException(status_code=502, detail="Snapshot backend request failed")
+    if isinstance(error, VirtualMachineIdentityNotFound):
+        raise HTTPException(status_code=404, detail="VirtualMachine not found")
+    raise HTTPException(status_code=500, detail="Snapshot internal error")
 
 
 def create_snapshot_router(

@@ -12,11 +12,17 @@ from iaas_sim.adapters.http.virtual_machine import (
     create_virtual_machine_router,
 )
 from iaas_sim.adapters.memory.operation import InMemoryOperationRegistry
-from iaas_sim.application.identity import BackendVirtualMachineRef, VirtualMachineIdentityNotFound
+from iaas_sim.application.identity import (
+    BackendVirtualMachineRef,
+    VirtualMachineIdentityNotFound,
+    VirtualMachineIdentityPersistenceFailure,
+)
 from iaas_sim.application.operation import (
+    BackendOperationFailed,
     BackendOperationRef,
     BackendOperationRunning,
     BackendOperationStatus,
+    OperationPollingFailure,
 )
 from iaas_sim.application.virtual_machine import (
     ObservedVirtualMachine,
@@ -123,3 +129,59 @@ def test_backend_not_found_does_not_expose_backend_identity():
     assert response.status_code == 404
     assert response.json() == {"detail": "VirtualMachine not found"}
     assert "vm-1" not in response.text
+
+
+def test_backend_failure_does_not_expose_backend_reason():
+    port = Port()
+    port.list_virtual_machines = lambda: Err(VirtualMachineBackendFailure("list", "vm-123"))
+    response = client_for(port).get("/v1/virtualMachines")
+    assert response.status_code == 502
+    assert response.json() == {"detail": "VirtualMachine backend request failed"}
+    assert "vm-123" not in response.text
+
+
+def test_identity_persistence_failure_does_not_expose_backend_reason():
+    class FailingIdentity(Identity):
+        def get_or_create_by_backend_ref(self, backend_ref):
+            return Err(
+                VirtualMachineIdentityPersistenceFailure(
+                    "get-or-create", "database failed for vm-123"
+                )
+            )
+
+    app = FastAPI()
+    app.include_router(
+        create_virtual_machine_router(Port(), FailingIdentity(), InMemoryOperationRegistry())
+    )
+    response = TestClient(app).get("/v1/virtualMachines")
+    assert response.status_code == 500
+    assert response.json() == {"detail": "VirtualMachine internal error"}
+    assert "vm-123" not in response.text
+
+
+def test_operation_polling_failure_does_not_expose_backend_reason():
+    port = Port()
+    api = client_for(port)
+    accepted = api.post(f"/v1/virtualMachines/{VM_ID}:start")
+    operation_path = accepted.headers["location"]
+    port.get_operation_status = lambda backend_ref: Err(OperationPollingFailure("task-17"))
+
+    response = api.get(operation_path)
+
+    assert response.status_code == 502
+    assert response.json() == {"detail": "Operation polling failed"}
+    assert "task-17" not in response.text
+
+
+def test_failed_operation_resource_uses_public_safe_reason():
+    port = Port()
+    api = client_for(port)
+    accepted = api.post(f"/v1/virtualMachines/{VM_ID}:start")
+    operation_path = accepted.headers["location"]
+    raw_reason = "task-17 vm-123 internal backend failure"
+    port.backend_status = BackendOperationFailed(raw_reason)
+    response = api.get(operation_path)
+
+    assert response.status_code == 200
+    assert response.json()["failure"] == {"reason": "Backend operation failed"}
+    assert raw_reason not in response.text
