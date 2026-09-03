@@ -83,6 +83,8 @@ Result policy:
 
 - Use a project-local Ok / Err / Result primitive; do not add external FP libraries.
 - Expected failures are typed Result values, not exceptions, and are propagated as control flow.
+- Expected failures remain Result values at Domain and Application boundaries. The only permitted exception-based control flow for expected Result propagation is the private short-circuit signal inside `iaas_sim.result`; it may only be raised by the project-local unwrap mechanism and caught by `result_workflow`.
+- The private short-circuit signal must never cross a decorated workflow boundary and must never be used for Domain or Application error semantics.
 - Application use cases are imperative orchestration over pure Domain functions and Ports. Keep the happy path visible from top to bottom.
 - Result combinators are a local implementation technique, not an architectural requirement. Use `map`, `map_error`, and `and_then` only when they improve local clarity; combinator-heavy Railway syntax is not a goal.
 - Explicit `Err` early returns are acceptable and preferred when they make sequential orchestration easier to read.
