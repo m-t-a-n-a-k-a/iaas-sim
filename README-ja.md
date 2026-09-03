@@ -1,44 +1,31 @@
 # iaas-sim
 
-学習・設計検証・アーキテクチャ検証を目的とした小規模なIaaSクラウドシミュレータです。現在の Phase 2A では、意図的に小さく保った制御プレーンに VirtualMachine の非同期電源操作を実装しています。
+学習、設計検証、アーキテクチャ実験のための小規模な IaaS 制御プレーンシミュレータです。vSphere simulator をバックエンドに使用しつつ、制御プレーンの識別子、永続化、アーキテクチャ境界を明示しています。
 
-## 目的
+## 現在の機能
 
-- vSphere互換バックエンドを前提にした小規模クラウド制御プレーンの骨格を検証する
-- mutable state と状態遷移を抑えた静的・明示的な設計を体験する
-- Docker Compose で起動確認できる最小構成を提供する
-- Operational Health、Swagger UI、OpenAPI、placeholder console を確認できるようにする
+- FastAPI と Uvicorn で提供する Python 3.14 制御プレーン
+- pyVmomi による `vcsim` バックエンド連携
+- SQLite に永続化される制御プレーン状態と、制御プレーンが発行する UUIDv7 識別子
+- `VirtualMachine`、`Snapshot`、`InstanceType`、永続的な `Operation` Resource
+- VirtualMachine の非同期 START / STOP と Snapshot の非同期作成 / 削除
+- `POST /v1/virtualMachines` による blank VM 作成。CREATE Operation は事前に割り当てられた将来の VirtualMachine UUIDv7 を対象とし、バックエンド識別子との mapping が確定してから VM を公開
+- OpenTelemetry と Grafana/otel-lgtm を含む Docker Compose 開発環境
+
+`VirtualMachine.power_state` は希望状態ではなく、バックエンドから観測した状態です。コマンドの受付は完了を意味しません。受け付けた非同期コマンドには `202 Accepted` を返し、完了または失敗まで永続的な `Operation` Resource で追跡します。
+
+## アーキテクチャと Result workflow
+
+Functional Core + Imperative Shell と Hexagonal Architecture を組み合わせています。不変かつ純粋な Domain rule を Application 層が Port 経由でオーケストレーションし、infrastructure は Adapter に留めます。期待される失敗は strict Python typing のもとで typed `Result` として扱います。
+
+複数段階の失敗しうる Application 処理では、小さな project-local Result workflow helper を利用できます。`result_workflow` は外部境界を typed `Result` のまま保ち、`ResultUnwrapper` は途中値の具体的な型を維持しながら `Err` を short-circuit させるため、処理を上から下へ直接読めます。これは汎用 FP framework ではなく、Result propagation に特化した小さな control-flow utility です。
 
 ## 主要技術
 
-- Python 3.14
-- FastAPI
-- Uvicorn
-- pyVmomi
-- SQLite（将来利用のために選定、現Phaseではビジネスロジックには使わない）
-- Svelte + TypeScript + Vite
-- Dex（将来OIDC向け）
-- OpenTelemetry + Grafana/otel-lgtm
-- Docker Compose
-
-## Phase 2A: 非同期電源操作
-
-VirtualMachine の電源操作（開始、停止）は非同期操作として実装されています：
-
-- **観測状態**: `VirtualMachine.power_state` はバックエンド から最後に観測された状態を表します。希望状態ではありません
-- **非同期実行**: `POST /v1/virtualMachines/{id}:start` は `202 Accepted` と `Location` ヘッダを返します
-- **操作追跡**: 電源操作は `Operation` リソース（UUIDv7 識別子）で追跡されます
-  - process-local registry が公開 ID と opaque な backend reference を対応付け、GET 時に
-    backend の現在状態を poll して投影します。Phase 2A では永続化しません
-- **責務の分離**：
-  - ドメイン検証は純粋：観測状態に対するコマンド検証、副作用なし
-  - アプリケーション層：ドメイン検証 + バックエンド送信を合成
-  - opaque な backend operation reference は Adapter 内部に留め、公開 Operation ID としては公開しません
-  - Operation status は immutable な `Running | Succeeded | Failed(failure)` ADT で、target は
-    backend-independent な resource reference です
-- **失敗セマンティクス**：
-  - 同期的失敗（検証・送信失敗）: HTTP 4xx/5xx レスポンス
-  - 非同期的失敗（backend operation 実行失敗）: `Operation.state = FAILED`
+- Python 3.14、FastAPI、Uvicorn、pyVmomi、SQLite
+- Svelte、TypeScript、Vite
+- `vcsim` を含む Docker Compose
+- OpenTelemetry、Grafana/otel-lgtm
 
 ## Codespaces
 
@@ -47,12 +34,12 @@ VirtualMachine の電源操作（開始、停止）は非同期操作として�
    ```bash
    make up
    ```
-3. 次のURLを開く
+3. 次の URL を開く
    - http://localhost:8000/health
    - http://localhost:8000/docs
    - http://localhost:8000/ui
    - http://localhost:3000（Grafana/otel-lgtm）
-4. 停止するには
+4. 次のコマンドで環境を停止する
    ```bash
    make down
    ```
@@ -67,10 +54,6 @@ make logs
 make verify
 ```
 
-## 補足
+## 現在の制限
 
-- アプリケーションと vSphere simulator の接続は、意図された実行経路である Docker Compose network 内の `vcsim` ホスト名経由 HTTPS で検証する
-- host の `127.0.0.1` アクセスは、実際のアプリケーション経路ではないため completion criteria として扱わない
-- Phase 2A の対象は非同期 VM start/stop と非永続 Operation polling のみであり、IAM、metering、永続化、queue、retry、その他の cloud domain は対象外です
-- CI では Type Check、lint、import rules、pytest などを必須で検証する
-- 複数の失敗しうる Application 処理を上から下へ読みやすく保つため、project-local な Result workflow helper を使用する。外部境界では期待される失敗を引き続き typed Result として扱う。
+意図されたアプリケーション経路は Docker Compose network 内で `vcsim` に HTTPS 接続するものであり、host 側の `127.0.0.1` は付随的な port-publishing 経路にすぎません。IAM、metering、queue、retry policy、より広範な cloud-domain behavior は未実装です。strict typing、test、lint、architecture import rule は `make verify` で検証します。

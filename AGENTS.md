@@ -48,6 +48,12 @@ Rules:
    - Do not complete work with fake success, swallowed exceptions, weakened tests, or ignored failures.
    - Separate the root cause from the workaround; if a workaround is used, explicitly record that the underlying cause remains unresolved.
 
+Documentation:
+
+- `README.md` and `README-ja.md` are English and Japanese peer versions of the same project overview and must remain semantically synchronized; neither document is subordinate to the other.
+- Any addition, update, or deletion that materially changes project purpose, architecture, stack, implemented Resources, persistence, asynchronous Operation semantics, Result workflow policy, setup or Codespaces commands, current limitations, or other substantive information in one README must update the corresponding content in the other README in the same change.
+- Semantic equivalence is required, not word-for-word translation. Do not leave stale information in either README when removing or revising content in the other.
+
 Future design notes:
 
 - IAM: Principal × Scope × Role
@@ -83,11 +89,12 @@ Result policy:
 
 - Use a project-local Ok / Err / Result primitive; do not add external FP libraries.
 - Expected failures are typed Result values, not exceptions, and are propagated as control flow.
-- Expected failures remain Result values at Domain and Application boundaries. The only permitted exception-based control flow for expected Result propagation is the private short-circuit signal inside `iaas_sim.result`; it may only be raised by the project-local unwrap mechanism and caught by `result_workflow`.
-- The private short-circuit signal must never cross a decorated workflow boundary and must never be used for Domain or Application error semantics.
+- Expected failures remain Result values at Domain and Application boundaries. The only permitted exception-based control flow for expected Result propagation is the private `_ResultShortCircuit` implementation detail inside `iaas_sim.result`; it may only be raised by `ResultUnwrapper` and caught by `result_workflow`.
+- `_ResultShortCircuit` carries no Domain or Application error semantics and must never cross the decorated workflow boundary. `result_workflow` must not convert unexpected exceptions into `Result` values.
 - Application use cases are imperative orchestration over pure Domain functions and Ports. Keep the happy path visible from top to bottom.
 - Result combinators are a local implementation technique, not an architectural requirement. Use `map`, `map_error`, and `and_then` only when they improve local clarity; combinator-heavy Railway syntax is not a goal.
 - Explicit `Err` early returns are acceptable and preferred when they make sequential orchestration easier to read.
+- For short or simple Result handling, use an explicit `Err` return or an ordinary Result combinator when locally clearer. For a sequential, multi-step fallible workflow with heterogeneous intermediate values, use `result_workflow` and `ResultUnwrapper` when they improve readability; do not require them for every Application function.
 - Do not introduce nested local stages, tuple plumbing, closure-heavy composition, or nested lambdas merely to eliminate explicit `Err` propagation.
 - Once a value has been validated or transformed, downstream effects must consume that value rather than bypass it with an earlier input.
 - Semantic branching is distinct from Result propagation. Meaningful domain-state branches, ADT matches, pure validation, explicit collection traversal, and boundary unwrapping remain appropriate. Do not optimize for zero if-statements.
@@ -95,7 +102,7 @@ Result policy:
 - Use ADT / Enum / Union + match for meaningful states; keep simple booleans and if statements where they are clearer.
 - State transitions should prefer table-driven or decision-table logic over nested if/else chains.
 - Exceptions are for unexpected programming errors and bootstrap boundary handling, not for expected domain/application failures.
-- The intended Result primitives are `Ok`, `Err`, `Result`, `map`, `map_error`, and `and_then`. Add a combinator only after a repeated concrete need; do not build a speculative FP helper ecosystem.
+- The intended Result API is `Ok`, `Err`, `Result`, `map`, `map_error`, `and_then`, `ResultUnwrapper`, and `result_workflow`. Add another helper only after a repeated concrete need; do not build a speculative FP helper ecosystem.
 - Keep Pyright strict and readable; avoid Any, cast, or type: ignore when narrowing Result values.
 
 Testing policy:
