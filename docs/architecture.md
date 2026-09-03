@@ -1,6 +1,6 @@
 # Architecture
 
-The Phase 2D architecture remains intentionally small. VirtualMachine and Snapshot public
+The architecture remains intentionally small. VirtualMachine and Snapshot public
 identities are control-plane UUIDv7 values persisted by the SQLite identity adapter; vSphere MORs
 remain backend-only references. Application use cases project backend observations into Domain
 resources.
@@ -24,7 +24,7 @@ they have no vSphere identity or mapping.
 - No direct adapter-to-adapter dependencies.
 - Use a project-local Result primitive instead of external FP libraries.
 - Treat expected failures as typed Result values, not as exceptions propagated across the application.
-- Prefer railway-oriented composition over nested if/else or try/except chains for expected failure propagation.
+- Prefer `map`, `map_error`, and `and_then` pipelines over manual unwrapping for straight-line expected-failure propagation. Preserve explicit semantic branches and ensure every stage consumes the preceding successful value.
 - Convert external exceptions only at adapter boundaries into typed Err values; unexpected runtime failures remain handled at the process boundary.
 
 Operations are durable control-plane Resources. Their public state and safe failure reason are

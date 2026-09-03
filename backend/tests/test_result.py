@@ -1,6 +1,6 @@
 import pytest
 
-from iaas_sim.result import Err, Ok, Result, and_then, map
+from iaas_sim.result import Err, Ok, Result, and_then, map, map_error
 
 
 @pytest.mark.parametrize(
@@ -44,4 +44,25 @@ def test_and_then(
         return next_result
 
     assert and_then(result, continue_with) == expected
+    assert calls == expected_calls
+
+
+@pytest.mark.parametrize(
+    ("result", "expected", "expected_calls"),
+    [
+        pytest.param(Ok(3), Ok(3), 0, id="ok-preserves-value"),
+        pytest.param(Err("original"), Err(8), 1, id="err-converts-error"),
+    ],
+)
+def test_map_error(
+    result: Result[int, str], expected: Result[int, int] | Result[int, str], expected_calls: int
+) -> None:
+    calls = 0
+
+    def error_length(error: str) -> int:
+        nonlocal calls
+        calls += 1
+        return len(error)
+
+    assert map_error(result, error_length) == expected
     assert calls == expected_calls
