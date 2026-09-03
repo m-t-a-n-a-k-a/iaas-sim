@@ -37,12 +37,11 @@ before exposing it. There is intentionally no worker or retry: a submitted backe
 orphaned if the following database insert fails, and an unqueried completed task remains RUNNING
 until the next read-through reconciliation.
 
-## Phase 2E-1 blank VM backend primitive
+## Blank VirtualMachine creation
 
-The Application boundary defines a resolved create specification containing only a primitive name,
-vCPU count, and memory MiB. InstanceType resolution remains outside the vSphere adapter. The
-adapter deterministically sorts inventory candidates by name and MOR, then chooses the first
-datacenter VM folder, resource pool, and datastore. It submits one `CreateVM_Task` with a generic
-guest, no disks or NICs, and no power-on task, returning only the opaque Task MOR. The future public
-VM UUID and Task-result-to-VM identity binding remain deferred to Phase 2E-2; no schema or public
-HTTP route is added in Phase 2E-1.
+The public request contains a name and InstanceType Resource Reference. Application orchestration
+resolves and validates the name, vCPU count, and memory MiB before backend submission. The vSphere
+adapter adds an internal `extraConfig` marker containing the future public UUID and submits one
+`CreateVM_Task` without powering on the VM. Marked VMs without a finalized identity mapping are not
+auto-adopted. The Task result VM MOR stays internal and is bound to the future UUID in the same
+SQLite transaction that changes the CREATE Operation to `SUCCEEDED`. The schema remains version 3.

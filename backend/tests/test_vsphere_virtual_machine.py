@@ -61,7 +61,7 @@ def test_property_filter_requests_only_projection_fields() -> None:
     property_attributes = vars(property_specs[0])
     property_paths = property_attributes["pathSet"]
 
-    assert property_paths == ["name", "summary.runtime.powerState"]
+    assert property_paths == ["name", "summary.runtime.powerState", "config.extraConfig"]
 
 
 def test_snapshot_property_filter_requests_only_tree_roots() -> None:

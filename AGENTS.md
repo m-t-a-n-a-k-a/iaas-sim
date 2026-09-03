@@ -73,7 +73,9 @@ Current control-plane invariants:
 - No concurrent power operations policy yet (collect requirements first)
 - Backend operation identity is adapter-internal; public API uses Operation.id only
 - No transitional power states (POWERING_ON/OFF); Operation.state tracks execution
-- A backend primitive for blank VM creation exists, but no public VM create endpoint or identity binding is exposed yet.
+- `POST /v1/virtualMachines` accepts a name and InstanceType reference and returns a RUNNING CREATE Operation targeting the preallocated future VirtualMachine UUIDv7.
+- A newly created VM remains unavailable and STOPPED until its backend MOR identity binding and Operation SUCCEEDED transition are committed atomically.
+- Backend VMs carrying the internal creation marker are never automatically adopted while their future public identity is pending finalization.
 - A RUNNING Operation's backend state is polled on GET /operations/{id}, and terminal state is persisted.
 
 Result policy:

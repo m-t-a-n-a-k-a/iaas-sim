@@ -129,3 +129,24 @@ class SQLiteAdapter:
             return Ok(SnapshotIdentityMapping(BackendSnapshotRef(row[0]), VirtualMachineId(owner)))
         except (sqlite3.Error, ValueError) as exc:
             return Err(SnapshotIdentityPersistenceFailure("get", str(exc)))
+
+    def find_by_backend_ref(
+        self, backend_ref: BackendVirtualMachineRef
+    ) -> Result[VirtualMachineId | None, VirtualMachineIdentityPersistenceFailure]:
+        try:
+            with connect_database(self._database_path) as connection:
+                row = connection.execute(
+                    "SELECT id FROM virtual_machine WHERE backend_ref = ?", (str(backend_ref),)
+                ).fetchone()
+            if row is None:
+                return Ok(None)
+            if not isinstance(row[0], str):
+                return Err(VirtualMachineIdentityPersistenceFailure("find", "invalid mapping"))
+            parsed = UUID(row[0])
+            if parsed.version != UUID_VERSION_7:
+                return Err(
+                    VirtualMachineIdentityPersistenceFailure("find", "stored ID is not UUIDv7")
+                )
+            return Ok(VirtualMachineId(parsed))
+        except (sqlite3.Error, ValueError) as exc:
+            return Err(VirtualMachineIdentityPersistenceFailure("find", str(exc)))

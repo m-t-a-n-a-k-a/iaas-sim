@@ -28,6 +28,10 @@ type VirtualMachineIdentityError = (
 
 
 class VirtualMachineIdentityPort(Protocol):
+    def find_by_backend_ref(
+        self, backend_ref: BackendVirtualMachineRef
+    ) -> Result[VirtualMachineId | None, VirtualMachineIdentityPersistenceFailure]: ...
+
     def get_or_create_by_backend_ref(
         self, backend_ref: BackendVirtualMachineRef
     ) -> Result[VirtualMachineId, VirtualMachineIdentityPersistenceFailure]: ...
