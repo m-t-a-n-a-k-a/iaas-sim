@@ -67,7 +67,7 @@ def test_v1_database_upgrades_without_losing_identity_rows(tmp_path: Path) -> No
         connection.commit()
     migrate_database(path)
     with connect_database(path) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 2
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 3
         assert (
             connection.execute("SELECT backend_ref FROM virtual_machine").fetchone()[0] == "vm-17"
         )
@@ -77,7 +77,7 @@ def test_v1_database_upgrades_without_losing_identity_rows(tmp_path: Path) -> No
 def test_newer_schema_fails_fast(tmp_path: Path) -> None:
     path = _database_path(tmp_path)
     with connect_database(path) as connection:
-        connection.execute("PRAGMA user_version = 3")
+        connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION + 1}")
     with pytest.raises(RuntimeError, match="newer than supported"):
         migrate_database(path)
 
