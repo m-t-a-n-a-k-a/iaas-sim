@@ -27,7 +27,7 @@ from iaas_sim.domain.entity.virtual_machine import (
     validate_power_command,
 )
 from iaas_sim.domain.resource_reference import ResourceReference
-from iaas_sim.result import Err, Ok, Result, and_then, map, map_error
+from iaas_sim.result import Err, Ok, Result
 
 
 @dataclass(frozen=True, slots=True)
@@ -133,18 +133,17 @@ def _identity_error(
 def list_virtual_machines(
     port: VirtualMachinePort, identity: VirtualMachineIdentityPort
 ) -> Result[Sequence[VirtualMachine], ApplicationError]:
-    def project_all(
-        observations: Sequence[ObservedVirtualMachine],
-    ) -> Result[Sequence[VirtualMachine], ApplicationError]:
-        projected: list[VirtualMachine] = []
-        for vm in observations:
-            mapped = identity.get_or_create_by_backend_ref(vm.backend_ref)
-            if isinstance(mapped, Err):
-                return Err(mapped.error)
-            projected.append(VirtualMachine(mapped.value, vm.name, vm.power_state))
-        return Ok(tuple(projected))
+    listed = port.list_virtual_machines()
+    if isinstance(listed, Err):
+        return Err[ApplicationError](listed.error)
 
-    return and_then(port.list_virtual_machines(), project_all)
+    projected: list[VirtualMachine] = []
+    for vm in listed.value:
+        mapped = identity.get_or_create_by_backend_ref(vm.backend_ref)
+        if isinstance(mapped, Err):
+            return Err[ApplicationError](mapped.error)
+        projected.append(VirtualMachine(mapped.value, vm.name, vm.power_state))
+    return Ok(tuple(projected))
 
 
 def get_virtual_machine(
@@ -152,28 +151,20 @@ def get_virtual_machine(
     identity: VirtualMachineIdentityPort,
     virtual_machine_id: VirtualMachineId,
 ) -> Result[VirtualMachine, ApplicationError]:
-    def map_backend_error(
-        error: VirtualMachineBackendNotFound | VirtualMachineBackendFailure,
-    ) -> VirtualMachineNotFound | VirtualMachineBackendFailure:
-        if isinstance(error, VirtualMachineBackendNotFound):
-            return VirtualMachineNotFound(virtual_machine_id)
-        return error
+    resolved = identity.get_backend_ref(virtual_machine_id)
+    if isinstance(resolved, Err):
+        return Err(_identity_error(resolved.error, virtual_machine_id))
 
-    mapped = map_error(
-        identity.get_backend_ref(virtual_machine_id),
-        lambda error: _identity_error(error, virtual_machine_id),
-    )
-    observed = and_then(
-        mapped,
-        lambda backend_ref: map_error(port.get_virtual_machine(backend_ref), map_backend_error),
-    )
-    return map(
-        observed,
-        lambda vm: VirtualMachine(virtual_machine_id, vm.name, vm.power_state),
-    )
+    observed = port.get_virtual_machine(resolved.value)
+    if isinstance(observed, Err):
+        if isinstance(observed.error, VirtualMachineBackendNotFound):
+            return Err(VirtualMachineNotFound(virtual_machine_id))
+        return Err[ApplicationError](observed.error)
+
+    return Ok(VirtualMachine(virtual_machine_id, observed.value.name, observed.value.power_state))
 
 
-def execute_power_command(  # noqa: PLR0917
+def execute_power_command(  # noqa: PLR0911, PLR0917
     port: VirtualMachinePort,
     identity: VirtualMachineIdentityPort,
     store: OperationStorePort,
@@ -181,60 +172,43 @@ def execute_power_command(  # noqa: PLR0917
     virtual_machine_id: VirtualMachineId,
     command: PowerCommand,
 ) -> Result[Operation, ApplicationError]:
-    def observe(
-        backend_ref: BackendVirtualMachineRef,
-    ) -> Result[
-        tuple[BackendVirtualMachineRef, AcceptedPowerCommand],
-        VirtualMachineBackendNotFound | VirtualMachineBackendFailure | PowerCommandError,
-    ]:
-        def validate(
-            observed: ObservedVirtualMachine,
-        ) -> Result[tuple[BackendVirtualMachineRef, AcceptedPowerCommand], PowerCommandError]:
-            validated = validate_power_command(
-                VirtualMachine(virtual_machine_id, observed.name, observed.power_state), command
-            )
-            return map(validated, lambda accepted: (backend_ref, accepted))
+    resolved = identity.get_backend_ref(virtual_machine_id)
+    if isinstance(resolved, Err):
+        return Err(_identity_error(resolved.error, virtual_machine_id))
+    backend_ref = resolved.value
 
-        return and_then(port.get_virtual_machine(backend_ref), validate)
+    observed = port.get_virtual_machine(backend_ref)
+    if isinstance(observed, Err):
+        if isinstance(observed.error, VirtualMachineBackendNotFound):
+            return Err(VirtualMachineNotFound(virtual_machine_id))
+        return Err[ApplicationError](observed.error)
 
-    def submit(
-        validated: tuple[BackendVirtualMachineRef, AcceptedPowerCommand],
-    ) -> Result[BackendOperationRef, PowerCommandSubmissionFailure]:
-        backend_ref, accepted = validated
-        return map_error(
-            port.submit_power_command(backend_ref, accepted.command),
-            lambda error: PowerCommandSubmissionFailure(virtual_machine_id, error.reason),
-        )
-
-    def persist(
-        submitted: tuple[BackendVirtualMachineRef, AcceptedPowerCommand, BackendOperationRef],
-    ) -> Result[Operation, OperationPersistenceFailure]:
-        _backend_ref, accepted, task_ref = submitted
-        operation = Operation(
-            operation_id,
-            ResourceReference("virtualMachines", str(virtual_machine_id)),
-            accepted.command.value,
-            Running(),
-        )
-        return store.create_running(operation, task_ref)
-
-    mapped = map_error(
-        identity.get_backend_ref(virtual_machine_id),
-        lambda error: _identity_error(error, virtual_machine_id),
-    )
-    observed = map_error(
-        and_then(mapped, observe),
-        lambda error: (
-            VirtualMachineNotFound(virtual_machine_id)
-            if isinstance(error, VirtualMachineBackendNotFound)
-            else error
+    validated = validate_power_command(
+        VirtualMachine(
+            virtual_machine_id,
+            observed.value.name,
+            observed.value.power_state,
         ),
+        command,
     )
-    submitted = and_then(
-        observed,
-        lambda value: map(submit(value), lambda task_ref: (*value, task_ref)),
+    if isinstance(validated, Err):
+        return Err[ApplicationError](validated.error)
+    accepted: AcceptedPowerCommand = validated.value
+
+    submitted = port.submit_power_command(backend_ref, accepted.command)
+    if isinstance(submitted, Err):
+        return Err(PowerCommandSubmissionFailure(virtual_machine_id, submitted.error.reason))
+
+    operation = Operation(
+        operation_id,
+        ResourceReference("virtualMachines", str(virtual_machine_id)),
+        accepted.command.value,
+        Running(),
     )
-    return and_then(submitted, persist)
+    persisted = store.create_running(operation, submitted.value)
+    if isinstance(persisted, Err):
+        return Err[ApplicationError](persisted.error)
+    return persisted
 
 
 def start_virtual_machine(

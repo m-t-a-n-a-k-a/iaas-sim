@@ -76,13 +76,16 @@ Current control-plane invariants:
 - A backend primitive for blank VM creation exists, but no public VM create endpoint or identity binding is exposed yet.
 - A RUNNING Operation's backend state is polled on GET /operations/{id}, and terminal state is persisted.
 
-Result / Railway policy:
+Result policy:
 
 - Use a project-local Ok / Err / Result primitive; do not add external FP libraries.
 - Expected failures are typed Result values, not exceptions, and are propagated as control flow.
-- Application orchestration for expected failures should use Result pipelines and stop on the first Err. Do not repeatedly hand-write `result = step(...); if isinstance(result, Err): return ...` when `map`, `map_error`, and `and_then` express the same straight-line propagation.
-- Every `and_then` stage must consume the `Ok.value` produced by the immediately preceding stage. Never bypass a validated or transformed value by capturing an earlier input.
-- Semantic branching is distinct from Result propagation. Meaningful domain-state branches, ADT matches, pure validation, explicit collection traversal where clearer, and boundary unwrapping remain appropriate. Do not optimize for zero if-statements; optimize for explicit semantics and mechanical expected-failure propagation.
+- Application use cases are imperative orchestration over pure Domain functions and Ports. Keep the happy path visible from top to bottom.
+- Result combinators are a local implementation technique, not an architectural requirement. Use `map`, `map_error`, and `and_then` only when they improve local clarity; combinator-heavy Railway syntax is not a goal.
+- Explicit `Err` early returns are acceptable and preferred when they make sequential orchestration easier to read.
+- Do not introduce nested local stages, tuple plumbing, closure-heavy composition, or nested lambdas merely to eliminate explicit `Err` propagation.
+- Once a value has been validated or transformed, downstream effects must consume that value rather than bypass it with an earlier input.
+- Semantic branching is distinct from Result propagation. Meaningful domain-state branches, ADT matches, pure validation, explicit collection traversal, and boundary unwrapping remain appropriate. Do not optimize for zero if-statements.
 - Adapter boundaries may catch external exceptions and convert them to typed Err values; domain and application code should not use try/except for expected failures.
 - Use ADT / Enum / Union + match for meaningful states; keep simple booleans and if statements where they are clearer.
 - State transitions should prefer table-driven or decision-table logic over nested if/else chains.
