@@ -77,6 +77,7 @@ Current control-plane invariants:
 - A newly created VM remains unavailable and STOPPED until its backend MOR identity binding and Operation SUCCEEDED transition are committed atomically.
 - Backend VMs carrying the internal creation marker are never automatically adopted while their future public identity is pending finalization.
 - A RUNNING Operation's backend state is polled on GET /operations/{id}, and terminal state is persisted.
+- A SUCCEEDED VirtualMachine CREATE Operation requires an exact persisted future-ID to backend-ref mapping.
 
 Result policy:
 

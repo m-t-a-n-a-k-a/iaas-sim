@@ -136,14 +136,12 @@ def create_virtual_machine_router(
     port: VirtualMachinePort,
     identity: VirtualMachineIdentityPort,
     store: OperationStorePort,
-    instance_type_store: InstanceTypeStorePort | None = None,
+    instance_type_store: InstanceTypeStorePort,
 ) -> APIRouter:
     router = APIRouter(prefix="/v1/virtualMachines", tags=["virtualMachines"])
 
     @router.post("")
     def create_vm(request: VirtualMachineCreateRequest) -> JSONResponse:
-        if instance_type_store is None:
-            raise HTTPException(status_code=500, detail="InstanceType persistence failed")
         instance_type_id = parse_instance_type_id(request.instanceType.id)
         operation_id = OperationId(uuid7())
         virtual_machine_id = VirtualMachineId(uuid7())
@@ -220,7 +218,7 @@ def create_virtual_machine_router(
 def create_operation_router(
     store: OperationStorePort,
     backend: BackendOperationPort,
-    finalizer: VirtualMachineCreateFinalizerPort | None = None,
+    finalizer: VirtualMachineCreateFinalizerPort,
 ) -> APIRouter:
     """Operations API: read-only endpoint for tracking async commands."""
 

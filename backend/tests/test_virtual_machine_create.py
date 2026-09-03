@@ -5,12 +5,20 @@ from __future__ import annotations
 from uuid import uuid7
 
 import pytest
+from pyVmomi import vim
 
 from iaas_sim.adapters.vsphere.adapter import (
+    IAAS_SIM_PUBLIC_ID_EXTRA_CONFIG_KEY,
     VSphereAdapter,
     VsphereCreatePlacement,
 )
-from iaas_sim.application.operation import BackendOperationRef
+from iaas_sim.application.identity import BackendVirtualMachineRef
+from iaas_sim.application.operation import (
+    BackendOperationNoResult,
+    BackendOperationRef,
+    BackendOperationSucceeded,
+    BackendVirtualMachineCreated,
+)
 from iaas_sim.application.virtual_machine import (
     InvalidVirtualMachineCreateSpec,
     VirtualMachineCreateBackendSubmissionFailure,
@@ -90,10 +98,11 @@ def test_create_spec_rejects_invalid_minimums(spec: VirtualMachineCreateSpec) ->
 
 def test_submit_create_vm_builds_blank_config_and_returns_task_ref() -> None:
     folder = FakeFolder()
+    future_id = VirtualMachineId(uuid7())
     adapter = SubmissionAdapter(folder)
 
     result = adapter.submit_create_virtual_machine(
-        VirtualMachineId(uuid7()), VirtualMachineCreateSpec("vm-01", 2, 2048)
+        future_id, VirtualMachineCreateSpec("vm-01", 2, 2048)
     )
 
     assert result == Ok(BackendOperationRef("task-42"))
@@ -103,6 +112,10 @@ def test_submit_create_vm_builds_blank_config_and_returns_task_ref() -> None:
     assert object.__getattribute__(config, "numCPUs") == 2
     assert object.__getattribute__(config, "memoryMB") == 2048
     assert object.__getattribute__(config, "guestId") == "otherGuest64"
+    extra_config = object.__getattribute__(config, "extraConfig")
+    assert len(extra_config) == 1
+    assert object.__getattribute__(extra_config[0], "key") == IAAS_SIM_PUBLIC_ID_EXTRA_CONFIG_KEY
+    assert object.__getattribute__(extra_config[0], "value") == str(future_id)
     files = object.__getattribute__(config, "files")
     assert object.__getattribute__(files, "vmPathName") == "[datastore-a]"
     assert folder.pools == [adapter.pool]
@@ -135,3 +148,31 @@ def test_empty_name_is_rejected_by_application_validation() -> None:
     validated = validate_virtual_machine_create_spec(VirtualMachineCreateSpec("", 1, 1))
     assert isinstance(validated, Err)
     assert isinstance(validated.error, InvalidVirtualMachineCreateSpec)
+
+
+@pytest.mark.parametrize("is_vm_result", [True, False], ids=["create-vm-result", "generic-result"])
+def test_successful_task_projects_result_without_inventory_lookup(monkeypatch, is_vm_result):
+    class PollServiceInstance:
+        _stub = None
+
+    class PollAdapter(VSphereAdapter):
+        def _connect(self):
+            return PollServiceInstance()
+
+    class Info:
+        state = "success"
+        result = vim.VirtualMachine("vm-42", None) if is_vm_result else object()
+
+    class CompletedTask:
+        info = Info()
+
+    monkeypatch.setattr(vim, "Task", lambda managed_object_reference, stub: CompletedTask())
+
+    result = PollAdapter().get_operation_status(BackendOperationRef("task-42"))
+
+    expected_result = (
+        BackendVirtualMachineCreated(BackendVirtualMachineRef("vm-42"))
+        if is_vm_result
+        else BackendOperationNoResult()
+    )
+    assert result == Ok(BackendOperationSucceeded(expected_result))
