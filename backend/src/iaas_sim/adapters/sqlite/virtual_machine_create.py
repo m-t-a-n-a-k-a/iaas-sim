@@ -29,7 +29,7 @@ class SQLiteVirtualMachineCreateFinalizer:
     def __init__(self, database_path: str | PathLike[str]) -> None:
         self._database_path = database_path
 
-    def finalize_virtual_machine_create(
+    def finalize_virtual_machine_create(  # noqa: PLR0911
         self,
         operation: Operation,
         virtual_machine_id: VirtualMachineId,
@@ -50,12 +50,21 @@ class SQLiteVirtualMachineCreateFinalizer:
                 if isinstance(current.status, Failed):
                     return Ok(current)
 
-                mapping_error = self._check_mapping(connection, virtual_machine_id, backend_ref)
+                if isinstance(current.status, Succeeded):
+                    if not self._has_exact_mapping(connection, virtual_machine_id, backend_ref):
+                        return Err(
+                            OperationPersistenceFailure(
+                                "finalize-vm-create",
+                                "SUCCEEDED VM create requires exact identity mapping",
+                            )
+                        )
+                    return Ok(current)
+
+                mapping_error = self._check_running_mapping(
+                    connection, virtual_machine_id, backend_ref
+                )
                 if mapping_error is not None:
                     return Err(mapping_error)
-
-                if isinstance(current.status, Succeeded):
-                    return Ok(current)
 
                 connection.execute(
                     """INSERT INTO virtual_machine (id, backend_ref) VALUES (?, ?)
@@ -75,7 +84,22 @@ class SQLiteVirtualMachineCreateFinalizer:
             return Err(OperationPersistenceFailure("finalize-vm-create", str(exc)))
 
     @staticmethod
-    def _check_mapping(
+    def _has_exact_mapping(
+        connection: sqlite3.Connection,
+        virtual_machine_id: VirtualMachineId,
+        backend_ref: BackendVirtualMachineRef,
+    ) -> bool:
+        by_id = connection.execute(
+            "SELECT backend_ref FROM virtual_machine WHERE id = ?", (str(virtual_machine_id),)
+        ).fetchone()
+        by_ref = connection.execute(
+            "SELECT id FROM virtual_machine WHERE backend_ref = ?", (str(backend_ref),)
+        ).fetchone()
+        return by_id == (str(backend_ref),) and by_ref == (str(virtual_machine_id),)
+
+    @classmethod
+    def _check_running_mapping(
+        cls,
         connection: sqlite3.Connection,
         virtual_machine_id: VirtualMachineId,
         backend_ref: BackendVirtualMachineRef,
@@ -88,7 +112,7 @@ class SQLiteVirtualMachineCreateFinalizer:
         ).fetchone()
         if by_id is None and by_ref is None:
             return None
-        if by_id == (str(backend_ref),) and by_ref == (str(virtual_machine_id),):
+        if cls._has_exact_mapping(connection, virtual_machine_id, backend_ref):
             return None
         return OperationPersistenceFailure("finalize-vm-create", "VM identity mapping conflict")
 
