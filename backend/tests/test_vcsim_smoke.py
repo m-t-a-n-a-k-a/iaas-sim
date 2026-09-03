@@ -30,6 +30,7 @@ from iaas_sim.application.snapshot import (
     list_snapshots,
 )
 from iaas_sim.application.virtual_machine import (
+    VirtualMachineCreateSpec,
     get_virtual_machine,
     list_virtual_machines,
     start_virtual_machine,
@@ -111,6 +112,36 @@ def test_vcsim_retrieve_content_success() -> None:  # noqa: PLR0915
         assert content.rootFolder is not None
 
         adapter = VSphereAdapter()
+        create_name = f"blank-{uuid4()}"
+        create_submission = adapter.submit_create_virtual_machine(
+            VirtualMachineCreateSpec(create_name, 1, 1024)
+        )
+        assert isinstance(create_submission, Ok)
+        for _ in range(50):
+            create_status = adapter.get_operation_status(create_submission.value)
+            assert isinstance(create_status, Ok)
+            if isinstance(create_status.value, BackendOperationSucceeded):
+                break
+            assert isinstance(create_status.value, BackendOperationRunning)
+            time.sleep(0.1)
+        else:
+            pytest.fail("vcsim blank VM creation did not complete within five seconds")
+
+        created_inventory = view_manager.CreateContainerView(
+            content.rootFolder, [vim.VirtualMachine], True
+        )
+        created_vm = next(
+            vm
+            for vm in created_inventory.view
+            if object.__getattribute__(vm, "name") == create_name
+        )
+        runtime = object.__getattribute__(created_vm, "runtime")
+        config = object.__getattribute__(created_vm, "config")
+        hardware = object.__getattribute__(config, "hardware")
+        assert str(object.__getattribute__(runtime, "powerState")) == "poweredOff"
+        assert object.__getattribute__(hardware, "numCPU") == 1
+        assert object.__getattribute__(hardware, "memoryMB") == 1024
+
         database = NamedTemporaryFile(suffix=".db", delete=False)  # noqa: SIM115
         database.close()
         migrate_database(database.name)

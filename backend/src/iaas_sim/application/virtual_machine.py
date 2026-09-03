@@ -64,6 +64,36 @@ class PowerCommandBackendSubmissionFailure:
     reason: str
 
 
+@dataclass(frozen=True, slots=True)
+class VirtualMachineCreateSpec:
+    """Resolved, backend-independent inputs for creating a blank VM."""
+
+    name: str
+    vcpus: int
+    memory_mib: int
+
+
+@dataclass(frozen=True, slots=True)
+class InvalidVirtualMachineCreateSpec:
+    reason: str
+
+
+@dataclass(frozen=True, slots=True)
+class VirtualMachineCreateBackendSubmissionFailure:
+    reason: str
+
+
+def validate_virtual_machine_create_spec(
+    spec: VirtualMachineCreateSpec,
+) -> Result[VirtualMachineCreateSpec, InvalidVirtualMachineCreateSpec]:
+    """Apply only the backend-independent minimum required create validation."""
+    if spec.name == "":
+        return Err(InvalidVirtualMachineCreateSpec("name must not be empty"))
+    if spec.vcpus <= 0 or spec.memory_mib <= 0:
+        return Err(InvalidVirtualMachineCreateSpec("sizing must be positive"))
+    return Ok(spec)
+
+
 type ApplicationError = (
     VirtualMachineNotFound
     | VirtualMachineBackendFailure
@@ -86,6 +116,9 @@ class VirtualMachinePort(Protocol):
     def submit_power_command(
         self, backend_ref: BackendVirtualMachineRef, command: PowerCommand
     ) -> Result[BackendOperationRef, PowerCommandBackendSubmissionFailure]: ...
+    def submit_create_virtual_machine(
+        self, spec: VirtualMachineCreateSpec
+    ) -> Result[BackendOperationRef, VirtualMachineCreateBackendSubmissionFailure]: ...
 
 
 def _identity_error(
