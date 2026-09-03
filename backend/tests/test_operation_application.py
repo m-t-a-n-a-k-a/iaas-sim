@@ -22,6 +22,7 @@ from iaas_sim.domain.entity.operation import (
     ResourceReference,
     Running,
     Succeeded,
+    is_terminal,
 )
 from iaas_sim.result import Err, Ok, Result
 
@@ -89,3 +90,29 @@ def test_operation_status_constructors_only_allow_valid_shapes() -> None:
     assert Running() == Running()
     assert Succeeded() == Succeeded()
     assert Failed(OperationFailure("required")) == Failed(OperationFailure("required"))
+
+
+def test_operation_id_is_uuid_backed_newtype() -> None:
+    raw_id = uuid7()
+    operation_id = OperationId(raw_id)
+    operation = Operation(
+        operation_id, ResourceReference("virtualMachines", "vm-1"), "START", Running()
+    )
+
+    assert operation_id is raw_id
+    assert str(operation_id) == str(raw_id)
+    assert operation.id is operation_id
+
+
+@pytest.mark.parametrize(
+    ("status", "expected"),
+    [
+        pytest.param(Running(), False, id="running"),
+        pytest.param(Succeeded(), True, id="succeeded"),
+        pytest.param(Failed(OperationFailure("backend operation failed")), True, id="failed"),
+    ],
+)
+def test_operation_terminality_depends_only_on_status(
+    status: OperationStatus, expected: bool
+) -> None:
+    assert is_terminal(status) is expected

@@ -126,7 +126,7 @@ def create_snapshot_router(
                 return JSONResponse(
                     operation_resource(operation),
                     202,
-                    {"Location": f"/v1/operations/{operation.id.value}"},
+                    {"Location": f"/v1/operations/{operation.id}"},
                 )
 
     @router.delete("/{snapshot_id}")
@@ -141,7 +141,7 @@ def create_snapshot_router(
                 return JSONResponse(
                     operation_resource(operation),
                     202,
-                    {"Location": f"/v1/operations/{operation.id.value}"},
+                    {"Location": f"/v1/operations/{operation.id}"},
                 )
 
     return router
