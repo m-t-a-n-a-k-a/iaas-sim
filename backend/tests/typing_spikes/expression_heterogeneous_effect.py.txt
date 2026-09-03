@@ -1,0 +1,68 @@
+"""Isolated, intentionally non-importable typing spike for Expression 5.7.0.
+
+This file retains the exact direct-style shape evaluated with Pyright.  It has a
+``.txt`` suffix because the experiment does not satisfy the strict typing gate
+and therefore must not make the production quality gate fail.
+"""
+
+from typing import assert_type
+
+from expression import effect
+from expression.core import Ok, Result
+
+from iaas_sim.application.identity import BackendVirtualMachineRef
+from iaas_sim.application.operation import BackendOperationRef
+from iaas_sim.application.virtual_machine import ApplicationError, ObservedVirtualMachine
+from iaas_sim.domain.entity.operation import Operation
+from iaas_sim.domain.entity.virtual_machine import AcceptedPowerCommand
+
+
+def step_a() -> Result[BackendVirtualMachineRef, ApplicationError]:
+    return Ok(BackendVirtualMachineRef("vm-1"))
+
+
+def step_b(
+    backend_ref: BackendVirtualMachineRef,
+) -> Result[ObservedVirtualMachine, ApplicationError]:
+    raise NotImplementedError
+
+
+def step_c(
+    observed: ObservedVirtualMachine,
+) -> Result[AcceptedPowerCommand, ApplicationError]:
+    raise NotImplementedError
+
+
+def step_d(
+    accepted: AcceptedPowerCommand,
+) -> Result[BackendOperationRef, ApplicationError]:
+    raise NotImplementedError
+
+
+def step_e(
+    backend_operation_ref: BackendOperationRef,
+) -> Result[Operation, ApplicationError]:
+    raise NotImplementedError
+
+
+@effect.result[Operation, ApplicationError]()
+def heterogeneous_workflow():
+    backend_ref = yield from step_a()
+    assert_type(backend_ref, BackendVirtualMachineRef)
+
+    observed = yield from step_b(backend_ref)
+    assert_type(observed, ObservedVirtualMachine)
+
+    accepted = yield from step_c(observed)
+    assert_type(accepted, AcceptedPowerCommand)
+
+    backend_operation_ref = yield from step_d(accepted)
+    assert_type(backend_operation_ref, BackendOperationRef)
+
+    return (yield from step_e(backend_operation_ref))
+
+
+assert_type(
+    heterogeneous_workflow(),
+    Result[Operation, ApplicationError],
+)
