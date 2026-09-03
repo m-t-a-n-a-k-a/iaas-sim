@@ -81,20 +81,20 @@ Current control-plane invariants:
 
 Result policy:
 
-- The project is transitioning from its project-local Result implementation to the Expression library. This documentation records the architectural decision before the implementation migration; existing code may continue to use the local Result primitive until the follow-up implementation change completes the migration.
-- Expected failures are typed Result values, not exceptions. Expression is the selected typed functional control-flow implementation tool for Result and effect workflows; it does not replace Functional Core + Imperative Shell as the architecture.
-- Application use cases orchestrate pure Domain functions and Ports in readable, direct, top-to-bottom workflows. For short Result transformations, use ordinary Result composition such as `map` or `bind` when that is clearest.
-- For sequential workflows with several fallible steps, local intermediate values, and early termination, prefer Expression effect builders when they preserve readability and strict typing. Their purpose is to let the `Ok` path continue from top to bottom while errors short-circuit automatically, without repetitive explicit `Err` inspection and return boilerplate.
-- Functional syntax is not a goal by itself. Do not replace explicit propagation with deeply nested `bind`/`map` chains, nested lambdas, local stage functions, tuple plumbing, or closure-heavy composition.
-- Once a value has been validated or transformed, downstream effects must consume that value rather than bypassing it with an earlier input.
-- Semantic branching is distinct from Result propagation. ADT matches, domain-state branches, table-driven decisions, explicit collection traversal, pure validation, boundary unwrapping, and meaningful `if` statements remain appropriate.
+- Use a project-local Ok / Err / Result primitive; do not add external FP libraries.
+- Expected failures are typed Result values, not exceptions, and are propagated as control flow.
+- Application use cases are imperative orchestration over pure Domain functions and Ports. Keep the happy path visible from top to bottom.
+- Result combinators are a local implementation technique, not an architectural requirement. Use `map`, `map_error`, and `and_then` only when they improve local clarity; combinator-heavy Railway syntax is not a goal.
+- Explicit `Err` early returns are acceptable and preferred when they make sequential orchestration easier to read.
+- Do not introduce nested local stages, tuple plumbing, closure-heavy composition, or nested lambdas merely to eliminate explicit `Err` propagation.
+- Once a value has been validated or transformed, downstream effects must consume that value rather than bypass it with an earlier input.
+- Semantic branching is distinct from Result propagation. Meaningful domain-state branches, ADT matches, pure validation, explicit collection traversal, and boundary unwrapping remain appropriate. Do not optimize for zero if-statements.
 - Adapter boundaries may catch external exceptions and convert them to typed Err values; domain and application code should not use try/except for expected failures.
 - Use ADT / Enum / Union + match for meaningful states; keep simple booleans and if statements where they are clearer.
 - State transitions should prefer table-driven or decision-table logic over nested if/else chains.
 - Exceptions are for unexpected programming errors and bootstrap boundary handling, not for expected domain/application failures.
-- Keep adoption limited to Result and effect builders for readable short-circuit workflows. Do not establish Expression's Option, Seq, immutable Map, tagged unions, curry/pipe style, Try, mailbox, or other abstractions as project-wide standards without a concrete requirement.
-- Keep Pyright strict and readable; do not use `Any`, `cast`, `type: ignore`, or broad suppressions to accommodate Result workflows. If an effect builder substantially harms typing in a specific use case, prefer a simpler type-safe Result flow rather than forcing the builder.
-- Prioritize correctness, strict typing, readability, Result short-circuit ergonomics, and stylistic functional purity, in that order. Validate the preferred balance in the follow-up implementation rather than requiring every Application function to use an effect builder.
+- The intended Result primitives are `Ok`, `Err`, `Result`, `map`, `map_error`, and `and_then`. Add a combinator only after a repeated concrete need; do not build a speculative FP helper ecosystem.
+- Keep Pyright strict and readable; avoid Any, cast, or type: ignore when narrowing Result values.
 
 Testing policy:
 
