@@ -95,6 +95,7 @@ Result policy:
 - Result combinators are a local implementation technique, not an architectural requirement. Use `map`, `map_error`, and `and_then` only when they improve local clarity; combinator-heavy Railway syntax is not a goal.
 - Explicit `Err` early returns are acceptable and preferred when they make sequential orchestration easier to read.
 - For short or simple Result handling, use an explicit `Err` return or an ordinary Result combinator when locally clearer. For a sequential, multi-step fallible workflow with heterogeneous intermediate values, use `result_workflow` and `ResultUnwrapper` when they improve readability; do not require them for every Application function.
+- Within a `result_workflow`, prefer `ResultUnwrapper.map_error` over nested `unwrap(map_error(...))` when semantic error translation before unwrapping is more readable.
 - Do not introduce nested local stages, tuple plumbing, closure-heavy composition, or nested lambdas merely to eliminate explicit `Err` propagation.
 - Once a value has been validated or transformed, downstream effects must consume that value rather than bypass it with an earlier input.
 - Semantic branching is distinct from Result propagation. Meaningful domain-state branches, ADT matches, pure validation, explicit collection traversal, and boundary unwrapping remain appropriate. Do not optimize for zero if-statements.

@@ -36,6 +36,9 @@ class ResultUnwrapper[E]:
                 self._failure = failure
                 raise _ResultShortCircuit
 
+    def map_error[T, E2](self, result: Result[T, E2], mapper: Callable[[E2], E]) -> T:
+        return self(map_error(result, mapper))
+
     def failure[R](self) -> Result[R, E]:
         if self._failure is None:
             raise RuntimeError("Result workflow stopped without a failure")
