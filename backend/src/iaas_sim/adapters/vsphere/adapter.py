@@ -29,6 +29,9 @@ from iaas_sim.application.virtual_machine import (
     PowerCommandBackendSubmissionFailure,
     VirtualMachineBackendFailure,
     VirtualMachineBackendNotFound,
+    VirtualMachineCreateBackendSubmissionFailure,
+    VirtualMachineCreateSpec,
+    validate_virtual_machine_create_spec,
 )
 from iaas_sim.domain.entity.virtual_machine import (
     PowerCommand,
@@ -42,6 +45,13 @@ logger: Final[logging.Logger] = logging.getLogger("iaas_sim.adapters.vsphere")
 @dataclass(frozen=True, slots=True)
 class VsphereTaskRef:
     managed_object_reference: str
+
+
+@dataclass(frozen=True, slots=True)
+class VsphereCreatePlacement:
+    folder: VsphereVirtualMachineFolder
+    resource_pool: object
+    datastore_name: str
 
 
 @runtime_checkable
@@ -61,6 +71,11 @@ class VsphereSnapshotVirtualMachine(VsphereVirtualMachineObject, Protocol):
 @runtime_checkable
 class VsphereSnapshotObject(Protocol):
     def RemoveSnapshot_Task(self, removeChildren: bool, consolidate: bool) -> object: ...
+
+
+@runtime_checkable
+class VsphereVirtualMachineFolder(Protocol):
+    def CreateVM_Task(self, config: object, pool: object) -> object: ...
 
 
 class VsphereDynamicProperty(Protocol):
@@ -240,6 +255,69 @@ class VSphereAdapter:
             ):
                 return vm
         return None
+
+    @staticmethod
+    def _stable_inventory_key(item: object) -> tuple[str, str]:
+        name = object.__getattribute__(item, "name")
+        managed_object_id = object.__getattribute__(item, "_moId")
+        if not isinstance(name, str) or not isinstance(managed_object_id, str):
+            raise ValueError("placement candidate identity unavailable")
+        return name, managed_object_id
+
+    def _default_create_placement(self, content: object) -> VsphereCreatePlacement:
+        """Choose stable, adapter-internal placement from the available inventory."""
+        view_manager = object.__getattribute__(content, "viewManager")
+        root_folder = object.__getattribute__(content, "rootFolder")
+        if view_manager is None:
+            raise ValueError("view manager unavailable")
+
+        def candidates(vsphere_type: type[object]) -> list[object]:
+            view = view_manager.CreateContainerView(root_folder, [vsphere_type], True)
+            return sorted(view.view, key=self._stable_inventory_key)
+
+        datacenters = candidates(vim.Datacenter)
+        resource_pools = candidates(vim.ResourcePool)
+        datastores = candidates(vim.Datastore)
+        if not datacenters or not resource_pools or not datastores:
+            raise ValueError("default VM placement unavailable")
+        folder = object.__getattribute__(datacenters[0], "vmFolder")
+        if not isinstance(folder, VsphereVirtualMachineFolder):
+            raise ValueError("default VM folder unavailable")
+        datastore_name = object.__getattribute__(datastores[0], "name")
+        if not isinstance(datastore_name, str) or datastore_name == "":
+            raise ValueError("default datastore unavailable")
+        return VsphereCreatePlacement(folder, resource_pools[0], datastore_name)
+
+    def submit_create_virtual_machine(
+        self, spec: VirtualMachineCreateSpec
+    ) -> Result[BackendOperationRef, VirtualMachineCreateBackendSubmissionFailure]:
+        """Submit one asynchronous blank-VM CreateVM task without powering it on."""
+        validated = validate_virtual_machine_create_spec(spec)
+        if isinstance(validated, Err):
+            return Err(VirtualMachineCreateBackendSubmissionFailure(validated.error.reason))
+        service_instance: vim.ServiceInstance | None = None
+        try:
+            service_instance = self._connect()
+            content = service_instance.RetrieveContent()
+            placement = self._default_create_placement(content)
+            config = vim.vm.ConfigSpec(
+                name=validated.value.name,
+                numCPUs=validated.value.vcpus,
+                memoryMB=validated.value.memory_mib,
+                guestId="otherGuest64",
+                files=vim.vm.FileInfo(vmPathName=f"[{placement.datastore_name}]"),
+            )
+            task = placement.folder.CreateVM_Task(config=config, pool=placement.resource_pool)
+            return Ok(BackendOperationRef(str(object.__getattribute__(task, "_moId"))))
+        except Exception as exc:
+            logger.exception("vSphere VM creation submission failed")
+            return Err(VirtualMachineCreateBackendSubmissionFailure(str(exc)))
+        finally:
+            if service_instance is not None:
+                try:
+                    connect.Disconnect(service_instance)
+                except Exception:
+                    logger.exception("vSphere disconnect failed")
 
     def list_virtual_machines(
         self,

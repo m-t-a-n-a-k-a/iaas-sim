@@ -4,6 +4,7 @@ from __future__ import annotations
 import os
 import ssl
 import time
+from collections.abc import Sequence
 from tempfile import NamedTemporaryFile
 from urllib import error, request
 from uuid import uuid4, uuid7
@@ -15,7 +16,11 @@ from pyVmomi import vim
 from iaas_sim.adapters.sqlite.adapter import SQLiteAdapter
 from iaas_sim.adapters.sqlite.migration import migrate_database
 from iaas_sim.adapters.sqlite.operation import SQLiteOperationStore
-from iaas_sim.adapters.vsphere.adapter import VSphereAdapter
+from iaas_sim.adapters.vsphere.adapter import (
+    VSphereAdapter,
+    VspherePropertyCollector,
+    new_vmodl_data_object,
+)
 from iaas_sim.application.get_operation import get_operation as reconcile_operation
 from iaas_sim.application.operation import (
     BackendOperationFailed,
@@ -30,6 +35,7 @@ from iaas_sim.application.snapshot import (
     list_snapshots,
 )
 from iaas_sim.application.virtual_machine import (
+    VirtualMachineCreateSpec,
     get_virtual_machine,
     list_virtual_machines,
     start_virtual_machine,
@@ -38,6 +44,40 @@ from iaas_sim.application.virtual_machine import (
 from iaas_sim.domain.entity.operation import OperationId, Succeeded
 from iaas_sim.domain.entity.virtual_machine import PowerCommand, PowerState
 from iaas_sim.result import Err, Ok
+
+VM_CREATE_SMOKE_PROPERTIES = (
+    "name",
+    "summary.runtime.powerState",
+    "config.hardware.numCPU",
+    "config.hardware.memoryMB",
+)
+
+
+def collect_created_vm_properties(
+    property_collector: object, virtual_machines: Sequence[object], expected_name: str
+) -> dict[str, object]:
+    """Collect only properties needed to verify blank creation against vcsim."""
+    assert isinstance(property_collector, VspherePropertyCollector)
+    object_specs: list[object] = []
+    for vm in virtual_machines:
+        object_spec = new_vmodl_data_object("vmodl.query.PropertyCollector.ObjectSpec")
+        object.__setattr__(object_spec, "obj", vm)
+        object_specs.append(object_spec)
+    property_spec = new_vmodl_data_object("vmodl.query.PropertyCollector.PropertySpec")
+    object.__setattr__(property_spec, "type", vim.VirtualMachine)
+    object.__setattr__(property_spec, "pathSet", list(VM_CREATE_SMOKE_PROPERTIES))
+    filter_spec = new_vmodl_data_object("vmodl.query.PropertyCollector.FilterSpec")
+    object.__setattr__(filter_spec, "objectSet", object_specs)
+    object.__setattr__(filter_spec, "propSet", [property_spec])
+
+    matches: list[dict[str, object]] = []
+    for content in property_collector.RetrieveContents([filter_spec]):
+        properties = {item.name: item.val for item in content.propSet}
+        if properties.get("name") == expected_name:
+            matches.append(properties)
+    assert len(matches) == 1
+    assert set(matches[0]) == set(VM_CREATE_SMOKE_PROPERTIES)
+    return matches[0]
 
 
 def reconcile_until_success(
@@ -111,6 +151,34 @@ def test_vcsim_retrieve_content_success() -> None:  # noqa: PLR0915
         assert content.rootFolder is not None
 
         adapter = VSphereAdapter()
+        create_name = f"blank-{uuid4()}"
+        create_submission = adapter.submit_create_virtual_machine(
+            VirtualMachineCreateSpec(create_name, 1, 1024)
+        )
+        assert isinstance(create_submission, Ok)
+        for _ in range(50):
+            create_status = adapter.get_operation_status(create_submission.value)
+            assert isinstance(create_status, Ok)
+            if isinstance(create_status.value, BackendOperationSucceeded):
+                break
+            assert isinstance(create_status.value, BackendOperationRunning)
+            time.sleep(0.1)
+        else:
+            pytest.fail("vcsim blank VM creation did not complete within five seconds")
+
+        created_inventory = view_manager.CreateContainerView(
+            content.rootFolder, [vim.VirtualMachine], True
+        )
+        created_properties = collect_created_vm_properties(
+            content.propertyCollector,
+            tuple(created_inventory.view),
+            create_name,
+        )
+        assert created_properties["name"] == create_name
+        assert str(created_properties["summary.runtime.powerState"]) == "poweredOff"
+        assert created_properties["config.hardware.numCPU"] == 1
+        assert created_properties["config.hardware.memoryMB"] == 1024
+
         database = NamedTemporaryFile(suffix=".db", delete=False)  # noqa: SIM115
         database.close()
         migrate_database(database.name)
