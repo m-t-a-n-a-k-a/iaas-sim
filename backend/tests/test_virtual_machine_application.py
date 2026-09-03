@@ -7,7 +7,7 @@ import pytest
 import iaas_sim.application.virtual_machine as virtual_machine_application
 from iaas_sim.adapters.memory.operation import InMemoryOperationStore
 from iaas_sim.application.identity import BackendVirtualMachineRef, VirtualMachineIdentityNotFound
-from iaas_sim.application.operation import BackendOperationRef
+from iaas_sim.application.operation import BackendOperationRef, OperationPersistenceFailure
 from iaas_sim.application.virtual_machine import (
     ObservedVirtualMachine,
     PowerCommandBackendSubmissionFailure,
@@ -15,6 +15,7 @@ from iaas_sim.application.virtual_machine import (
     VirtualMachineBackendFailure,
     VirtualMachineBackendNotFound,
     VirtualMachineNotFound,
+    execute_power_command,
     get_virtual_machine,
     list_virtual_machines,
     start_virtual_machine,
@@ -51,6 +52,7 @@ class Port:
     def __init__(self, state: PowerState):
         self.vm = ObservedVirtualMachine(REF, "demo", state)
         self.submissions = []
+        self.observations = []
         self.failure = None
 
     def list_virtual_machines(
@@ -59,6 +61,7 @@ class Port:
         return Ok((self.vm,))
 
     def get_virtual_machine(self, backend_ref: BackendVirtualMachineRef):
+        self.observations.append(backend_ref)
         if backend_ref == REF:
             return Ok(self.vm)
         return Err(VirtualMachineBackendNotFound(backend_ref))
@@ -66,6 +69,19 @@ class Port:
     def submit_power_command(self, backend_ref: BackendVirtualMachineRef, command: PowerCommand):
         self.submissions.append((backend_ref, command))
         return Err(self.failure) if self.failure else Ok(BackendOperationRef("task-1"))
+
+
+class RecordingStore(InMemoryOperationStore):
+    def __init__(self, failure=None):
+        super().__init__()
+        self.creations = []
+        self.failure = failure
+
+    def create_running(self, operation, backend_ref):
+        self.creations.append((operation, backend_ref))
+        if self.failure is not None:
+            return Err(self.failure)
+        return super().create_running(operation, backend_ref)
 
 
 def test_list_and_get_project_public_identity():
@@ -107,14 +123,15 @@ def test_invalid_command_has_no_side_effect(state, use_case, error):
 
 def test_identity_failure_has_no_backend_side_effect():
     port = Port(PowerState.STOPPED)
+    store = RecordingStore()
     unknown = VirtualMachineId(uuid7())
     assert isinstance(
-        start_virtual_machine(
-            port, Identity(), InMemoryOperationStore(), OperationId(uuid7()), unknown
-        ),
+        start_virtual_machine(port, Identity(), store, OperationId(uuid7()), unknown),
         Err,
     )
     assert port.submissions == []
+    assert port.observations == []
+    assert store.creations == []
 
 
 def test_backend_not_found_maps_to_public_identity():
@@ -150,3 +167,59 @@ def test_power_pipeline_passes_validated_command_to_later_stages(monkeypatch) ->
     assert isinstance(result, Ok)
     assert port.submissions == [(REF, PowerCommand.STOP)]
     assert result.value.action == PowerCommand.STOP.value
+
+
+def test_power_workflow_observation_failure_stops_submission_and_persistence() -> None:
+    port = Port(PowerState.STOPPED)
+    port.get_virtual_machine = lambda backend_ref: Err(VirtualMachineBackendNotFound(backend_ref))
+    store = RecordingStore()
+
+    result = execute_power_command(
+        port, Identity(), store, OperationId(uuid7()), VM_ID, PowerCommand.START
+    )
+
+    assert result == Err(VirtualMachineNotFound(VM_ID))
+    assert port.submissions == []
+    assert store.creations == []
+
+
+def test_power_workflow_validation_failure_stops_submission_and_persistence() -> None:
+    port = Port(PowerState.RUNNING)
+    store = RecordingStore()
+
+    result = execute_power_command(
+        port, Identity(), store, OperationId(uuid7()), VM_ID, PowerCommand.START
+    )
+
+    assert result == Err(AlreadyRunning(VM_ID))
+    assert port.submissions == []
+    assert store.creations == []
+
+
+def test_power_workflow_submission_failure_stops_persistence() -> None:
+    port = Port(PowerState.STOPPED)
+    port.failure = PowerCommandBackendSubmissionFailure(REF, "submission failed")
+    store = RecordingStore()
+
+    result = execute_power_command(
+        port, Identity(), store, OperationId(uuid7()), VM_ID, PowerCommand.START
+    )
+
+    assert result == Err(PowerCommandSubmissionFailure(VM_ID, "submission failed"))
+    assert store.creations == []
+
+
+def test_power_workflow_returns_exact_persistence_failure() -> None:
+    failure = OperationPersistenceFailure("create", "database unavailable")
+    store = RecordingStore(failure)
+
+    result = execute_power_command(
+        Port(PowerState.STOPPED),
+        Identity(),
+        store,
+        OperationId(uuid7()),
+        VM_ID,
+        PowerCommand.START,
+    )
+
+    assert result == Err(failure)

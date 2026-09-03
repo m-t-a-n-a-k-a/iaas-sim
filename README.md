@@ -73,3 +73,4 @@ make verify
 - Host-side `127.0.0.1` access is not treated as the completion criterion because it is an incidental local port-publishing path rather than the real application path.
 - Phase 2A implements only asynchronous VM start/stop and non-durable Operation polling; IAM, metering, persistence, queues, retry, and broader cloud domain behavior remain out of scope.
 - The project uses a strict Python typing setup and architecture import rules that are enforced in CI.
+- The project uses a small project-local Result workflow helper to keep multi-step fallible Application orchestration linear while preserving typed Result boundaries.

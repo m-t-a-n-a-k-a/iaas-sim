@@ -73,3 +73,4 @@ make verify
 - host の `127.0.0.1` アクセスは、実際のアプリケーション経路ではないため completion criteria として扱わない
 - Phase 2A の対象は非同期 VM start/stop と非永続 Operation polling のみであり、IAM、metering、永続化、queue、retry、その他の cloud domain は対象外です
 - CI では Type Check、lint、import rules、pytest などを必須で検証する
+- 複数の失敗しうる Application 処理を上から下へ読みやすく保つため、project-local な Result workflow helper を使用する。外部境界では期待される失敗を引き続き typed Result として扱う。

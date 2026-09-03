@@ -33,7 +33,7 @@ from iaas_sim.domain.entity.virtual_machine import (
     validate_power_command,
 )
 from iaas_sim.domain.resource_reference import ResourceReference
-from iaas_sim.result import Err, Ok, Result
+from iaas_sim.result import Err, Ok, Result, ResultUnwrapper, map_error, result_workflow
 
 
 @dataclass(frozen=True, slots=True)
@@ -141,6 +141,25 @@ def _identity_error(
     return error
 
 
+def _observation_error(
+    error: VirtualMachineBackendNotFound | VirtualMachineBackendFailure,
+    public_id: VirtualMachineId,
+) -> ApplicationError:
+    if isinstance(error, VirtualMachineBackendNotFound):
+        return VirtualMachineNotFound(public_id)
+    return error
+
+
+def _submission_error(
+    error: PowerCommandBackendSubmissionFailure, public_id: VirtualMachineId
+) -> ApplicationError:
+    return PowerCommandSubmissionFailure(public_id, error.reason)
+
+
+def _as_application_error(error: ApplicationError) -> ApplicationError:
+    return error
+
+
 def list_virtual_machines(
     port: VirtualMachinePort, identity: VirtualMachineIdentityPort
 ) -> Result[Sequence[VirtualMachine], ApplicationError]:
@@ -231,51 +250,59 @@ def create_virtual_machine(  # noqa: PLR0917
     return persisted
 
 
-def execute_power_command(  # noqa: PLR0911, PLR0917
+@result_workflow
+def execute_power_command(  # noqa: PLR0917
+    unwrap: ResultUnwrapper[ApplicationError],
     port: VirtualMachinePort,
     identity: VirtualMachineIdentityPort,
     store: OperationStorePort,
     operation_id: OperationId,
     virtual_machine_id: VirtualMachineId,
     command: PowerCommand,
-) -> Result[Operation, ApplicationError]:
-    resolved = identity.get_backend_ref(virtual_machine_id)
-    if isinstance(resolved, Err):
-        return Err(_identity_error(resolved.error, virtual_machine_id))
-    backend_ref = resolved.value
-
-    observed = port.get_virtual_machine(backend_ref)
-    if isinstance(observed, Err):
-        if isinstance(observed.error, VirtualMachineBackendNotFound):
-            return Err(VirtualMachineNotFound(virtual_machine_id))
-        return Err[ApplicationError](observed.error)
-
-    validated = validate_power_command(
-        VirtualMachine(
-            virtual_machine_id,
-            observed.value.name,
-            observed.value.power_state,
-        ),
-        command,
+) -> Operation:
+    backend_ref = unwrap(
+        map_error(
+            identity.get_backend_ref(virtual_machine_id),
+            lambda error: _identity_error(error, virtual_machine_id),
+        )
     )
-    if isinstance(validated, Err):
-        return Err[ApplicationError](validated.error)
-    accepted: AcceptedPowerCommand = validated.value
-
-    submitted = port.submit_power_command(backend_ref, accepted.command)
-    if isinstance(submitted, Err):
-        return Err(PowerCommandSubmissionFailure(virtual_machine_id, submitted.error.reason))
-
+    observed = unwrap(
+        map_error(
+            port.get_virtual_machine(backend_ref),
+            lambda error: _observation_error(error, virtual_machine_id),
+        )
+    )
+    accepted: AcceptedPowerCommand = unwrap(
+        map_error(
+            validate_power_command(
+                VirtualMachine(
+                    virtual_machine_id,
+                    observed.name,
+                    observed.power_state,
+                ),
+                command,
+            ),
+            _as_application_error,
+        )
+    )
+    backend_operation_ref = unwrap(
+        map_error(
+            port.submit_power_command(backend_ref, accepted.command),
+            lambda error: _submission_error(error, virtual_machine_id),
+        )
+    )
     operation = Operation(
         operation_id,
         ResourceReference("virtualMachines", str(virtual_machine_id)),
         accepted.command.value,
         Running(),
     )
-    persisted = store.create_running(operation, submitted.value)
-    if isinstance(persisted, Err):
-        return Err[ApplicationError](persisted.error)
-    return persisted
+    return unwrap(
+        map_error(
+            store.create_running(operation, backend_operation_ref),
+            _as_application_error,
+        )
+    )
 
 
 def start_virtual_machine(
