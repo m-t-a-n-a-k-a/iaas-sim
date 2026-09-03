@@ -42,7 +42,7 @@ from iaas_sim.application.virtual_machine import (
     stop_virtual_machine,
 )
 from iaas_sim.domain.entity.operation import OperationId, Succeeded
-from iaas_sim.domain.entity.virtual_machine import PowerCommand, PowerState
+from iaas_sim.domain.entity.virtual_machine import PowerCommand, PowerState, VirtualMachineId
 from iaas_sim.result import Err, Ok
 
 VM_CREATE_SMOKE_PROPERTIES = (
@@ -153,7 +153,7 @@ def test_vcsim_retrieve_content_success() -> None:  # noqa: PLR0915
         adapter = VSphereAdapter()
         create_name = f"blank-{uuid4()}"
         create_submission = adapter.submit_create_virtual_machine(
-            VirtualMachineCreateSpec(create_name, 1, 1024)
+            VirtualMachineId(uuid7()), VirtualMachineCreateSpec(create_name, 1, 1024)
         )
         assert isinstance(create_submission, Ok)
         for _ in range(50):

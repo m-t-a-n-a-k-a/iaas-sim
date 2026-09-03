@@ -11,11 +11,17 @@ from iaas_sim.application.identity import (
     VirtualMachineIdentityPersistenceFailure,
     VirtualMachineIdentityPort,
 )
+from iaas_sim.application.instance_type import (
+    InstanceTypeNotFound,
+    InstanceTypePersistenceFailure,
+    InstanceTypeStorePort,
+)
 from iaas_sim.application.operation import (
     BackendOperationRef,
     OperationPersistenceFailure,
     OperationStorePort,
 )
+from iaas_sim.domain.entity.instance_type import InstanceTypeId
 from iaas_sim.domain.entity.operation import Operation, OperationId, Running
 from iaas_sim.domain.entity.virtual_machine import (
     AcceptedPowerCommand,
@@ -35,6 +41,7 @@ class ObservedVirtualMachine:
     backend_ref: BackendVirtualMachineRef
     name: str
     power_state: PowerState
+    creation_virtual_machine_id: VirtualMachineId | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -102,6 +109,10 @@ type ApplicationError = (
     | PowerCommandError
     | PowerCommandSubmissionFailure
     | OperationPersistenceFailure
+    | InstanceTypeNotFound
+    | InstanceTypePersistenceFailure
+    | InvalidVirtualMachineCreateSpec
+    | VirtualMachineCreateBackendSubmissionFailure
 )
 
 
@@ -118,7 +129,7 @@ class VirtualMachinePort(Protocol):
         self, backend_ref: BackendVirtualMachineRef, command: PowerCommand
     ) -> Result[BackendOperationRef, PowerCommandBackendSubmissionFailure]: ...
     def submit_create_virtual_machine(
-        self, spec: VirtualMachineCreateSpec
+        self, virtual_machine_id: VirtualMachineId, spec: VirtualMachineCreateSpec
     ) -> Result[BackendOperationRef, VirtualMachineCreateBackendSubmissionFailure]: ...
 
 
@@ -139,7 +150,21 @@ def list_virtual_machines(
 
     projected: list[VirtualMachine] = []
     for vm in listed.value:
-        mapped = identity.get_or_create_by_backend_ref(vm.backend_ref)
+        if vm.creation_virtual_machine_id is None:
+            mapped = identity.get_or_create_by_backend_ref(vm.backend_ref)
+        else:
+            existing = identity.find_by_backend_ref(vm.backend_ref)
+            if isinstance(existing, Err):
+                return Err[ApplicationError](existing.error)
+            if existing.value is None:
+                continue
+            if existing.value != vm.creation_virtual_machine_id:
+                return Err[ApplicationError](
+                    VirtualMachineIdentityPersistenceFailure(
+                        "list", "creation marker does not match identity mapping"
+                    )
+                )
+            mapped = Ok(existing.value)
         if isinstance(mapped, Err):
             return Err[ApplicationError](mapped.error)
         projected.append(VirtualMachine(mapped.value, vm.name, vm.power_state))
@@ -161,7 +186,49 @@ def get_virtual_machine(
             return Err(VirtualMachineNotFound(virtual_machine_id))
         return Err[ApplicationError](observed.error)
 
+    marker = observed.value.creation_virtual_machine_id
+    if marker is not None and marker != virtual_machine_id:
+        return Err[ApplicationError](
+            VirtualMachineIdentityPersistenceFailure(
+                "get", "creation marker does not match requested identity"
+            )
+        )
     return Ok(VirtualMachine(virtual_machine_id, observed.value.name, observed.value.power_state))
+
+
+def create_virtual_machine(  # noqa: PLR0917
+    port: VirtualMachinePort,
+    instance_type_store: InstanceTypeStorePort,
+    operation_store: OperationStorePort,
+    operation_id: OperationId,
+    virtual_machine_id: VirtualMachineId,
+    instance_type_id: InstanceTypeId,
+    name: str,
+) -> Result[Operation, ApplicationError]:
+    resolved = instance_type_store.get_instance_type(instance_type_id)
+    if isinstance(resolved, Err):
+        return Err[ApplicationError](resolved.error)
+
+    validated = validate_virtual_machine_create_spec(
+        VirtualMachineCreateSpec(name, resolved.value.vcpus, resolved.value.memory_mib)
+    )
+    if isinstance(validated, Err):
+        return Err[ApplicationError](validated.error)
+
+    submitted = port.submit_create_virtual_machine(virtual_machine_id, validated.value)
+    if isinstance(submitted, Err):
+        return Err[ApplicationError](submitted.error)
+
+    operation = Operation(
+        operation_id,
+        ResourceReference("virtualMachines", str(virtual_machine_id)),
+        "CREATE",
+        Running(),
+    )
+    persisted = operation_store.create_running(operation, submitted.value)
+    if isinstance(persisted, Err):
+        return Err[ApplicationError](persisted.error)
+    return persisted
 
 
 def execute_power_command(  # noqa: PLR0911, PLR0917

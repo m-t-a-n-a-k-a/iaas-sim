@@ -5,6 +5,7 @@ import os
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Final, Protocol, runtime_checkable
+from uuid import UUID
 
 from pyVim import connect
 from pyVmomi import VmomiSupport, vim
@@ -16,6 +17,7 @@ from iaas_sim.application.operation import (
     BackendOperationRunning,
     BackendOperationStatus,
     BackendOperationSucceeded,
+    BackendVirtualMachineCreated,
     OperationPollingFailure,
 )
 from iaas_sim.application.snapshot import (
@@ -31,15 +33,17 @@ from iaas_sim.application.virtual_machine import (
     VirtualMachineBackendNotFound,
     VirtualMachineCreateBackendSubmissionFailure,
     VirtualMachineCreateSpec,
-    validate_virtual_machine_create_spec,
 )
 from iaas_sim.domain.entity.virtual_machine import (
     PowerCommand,
     PowerState,
+    VirtualMachineId,
 )
 from iaas_sim.result import Err, Ok, Result
 
 logger: Final[logging.Logger] = logging.getLogger("iaas_sim.adapters.vsphere")
+IAAS_SIM_PUBLIC_ID_EXTRA_CONFIG_KEY: Final = "iaas-sim.internal.publicVirtualMachineId"
+UUID_VERSION_7 = 7
 
 
 @dataclass(frozen=True, slots=True)
@@ -105,7 +109,10 @@ def new_vmodl_data_object(type_name: str) -> object:
 
 
 def project_virtual_machine(
-    backend_ref: BackendVirtualMachineRef, name: str, observed_power_state: object
+    backend_ref: BackendVirtualMachineRef,
+    name: str,
+    observed_power_state: object,
+    creation_virtual_machine_id: VirtualMachineId | None = None,
 ) -> ObservedVirtualMachine:
     """Project explicitly collected vSphere properties into the Domain entity."""
     power_state = str(observed_power_state)
@@ -115,7 +122,7 @@ def project_virtual_machine(
     }.get(power_state)
     if state is None:
         raise ValueError(f"unsupported power state: {power_state}")
-    return ObservedVirtualMachine(backend_ref, name, state)
+    return ObservedVirtualMachine(backend_ref, name, state, creation_virtual_machine_id)
 
 
 def virtual_machine_property_filter(
@@ -126,7 +133,9 @@ def virtual_machine_property_filter(
     object.__setattr__(object_spec, "obj", vm)
     property_spec = new_vmodl_data_object("vmodl.query.PropertyCollector.PropertySpec")
     object.__setattr__(property_spec, "type", vim.VirtualMachine)
-    object.__setattr__(property_spec, "pathSet", ["name", "summary.runtime.powerState"])
+    object.__setattr__(
+        property_spec, "pathSet", ["name", "summary.runtime.powerState", "config.extraConfig"]
+    )
     filter_spec = new_vmodl_data_object("vmodl.query.PropertyCollector.FilterSpec")
     object.__setattr__(filter_spec, "objectSet", [object_spec])
     object.__setattr__(filter_spec, "propSet", [property_spec])
@@ -237,9 +246,30 @@ class VSphereAdapter:
             raise ValueError("VM name unavailable")
         if power_state is None:
             raise ValueError("VM power state unavailable")
+        marker = self._creation_marker(properties.get("config.extraConfig", ()))
         return project_virtual_machine(
-            BackendVirtualMachineRef(self._managed_object_id(vm)), name, power_state
+            BackendVirtualMachineRef(self._managed_object_id(vm)), name, power_state, marker
         )
+
+    @staticmethod
+    def _creation_marker(extra_config: object) -> VirtualMachineId | None:
+        if not isinstance(extra_config, Sequence):
+            raise ValueError("malformed VM extraConfig")
+        values: list[object] = []
+        for option in extra_config:
+            if object.__getattribute__(option, "key") == IAAS_SIM_PUBLIC_ID_EXTRA_CONFIG_KEY:
+                values.append(object.__getattribute__(option, "value"))
+        if len(values) == 0:
+            return None
+        if len(values) != 1 or not isinstance(values[0], str):
+            raise ValueError("malformed duplicate creation marker")
+        try:
+            parsed = UUID(values[0])
+        except ValueError as exc:
+            raise ValueError("invalid creation marker") from exc
+        if parsed.version != UUID_VERSION_7:
+            raise ValueError("creation marker is not UUIDv7")
+        return VirtualMachineId(parsed)
 
     def _find(
         self, service_instance: vim.ServiceInstance, backend_ref: BackendVirtualMachineRef
@@ -289,23 +319,26 @@ class VSphereAdapter:
         return VsphereCreatePlacement(folder, resource_pools[0], datastore_name)
 
     def submit_create_virtual_machine(
-        self, spec: VirtualMachineCreateSpec
+        self, virtual_machine_id: VirtualMachineId, spec: VirtualMachineCreateSpec
     ) -> Result[BackendOperationRef, VirtualMachineCreateBackendSubmissionFailure]:
         """Submit one asynchronous blank-VM CreateVM task without powering it on."""
-        validated = validate_virtual_machine_create_spec(spec)
-        if isinstance(validated, Err):
-            return Err(VirtualMachineCreateBackendSubmissionFailure(validated.error.reason))
         service_instance: vim.ServiceInstance | None = None
         try:
             service_instance = self._connect()
             content = service_instance.RetrieveContent()
             placement = self._default_create_placement(content)
             config = vim.vm.ConfigSpec(
-                name=validated.value.name,
-                numCPUs=validated.value.vcpus,
-                memoryMB=validated.value.memory_mib,
+                name=spec.name,
+                numCPUs=spec.vcpus,
+                memoryMB=spec.memory_mib,
                 guestId="otherGuest64",
                 files=vim.vm.FileInfo(vmPathName=f"[{placement.datastore_name}]"),
+                extraConfig=[
+                    vim.option.OptionValue(
+                        key=IAAS_SIM_PUBLIC_ID_EXTRA_CONFIG_KEY,
+                        value=str(virtual_machine_id),
+                    )
+                ],
             )
             task = placement.folder.CreateVM_Task(config=config, pool=placement.resource_pool)
             return Ok(BackendOperationRef(str(object.__getattribute__(task, "_moId"))))
@@ -337,14 +370,7 @@ class VSphereAdapter:
             for vm in inventory.view:
                 if not isinstance(vm, VsphereVirtualMachineObject):
                     continue
-                try:
-                    vms.append(self._project(content.propertyCollector, vm))
-                except ValueError as exc:
-                    logger.warning(
-                        "Skipping VM %s: %s",
-                        self._managed_object_id(vm),
-                        exc,
-                    )
+                vms.append(self._project(content.propertyCollector, vm))
             return Ok(tuple(vms))
         except Exception as exc:
             logger.exception("vSphere VM listing failed")
@@ -544,6 +570,17 @@ class VSphereAdapter:
             if state in ("queued", "running"):
                 return Ok(BackendOperationRunning())
             if state == "success":
+                task_result = task.info.result
+                if isinstance(task_result, vim.VirtualMachine):
+                    return Ok(
+                        BackendOperationSucceeded(
+                            BackendVirtualMachineCreated(
+                                BackendVirtualMachineRef(
+                                    str(object.__getattribute__(task_result, "_moId"))
+                                )
+                            )
+                        )
+                    )
                 return Ok(BackendOperationSucceeded())
             if state == "error":
                 error = task.info.error

@@ -3,7 +3,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import NewType, Protocol
 
+from iaas_sim.application.identity import BackendVirtualMachineRef
 from iaas_sim.domain.entity.operation import Operation, OperationId
+from iaas_sim.domain.entity.virtual_machine import VirtualMachineId
 from iaas_sim.result import Result
 
 BackendOperationRef = NewType("BackendOperationRef", str)
@@ -15,8 +17,21 @@ class BackendOperationRunning:
 
 
 @dataclass(frozen=True, slots=True)
-class BackendOperationSucceeded:
+class BackendOperationNoResult:
     pass
+
+
+@dataclass(frozen=True, slots=True)
+class BackendVirtualMachineCreated:
+    backend_ref: BackendVirtualMachineRef
+
+
+type BackendOperationResult = BackendOperationNoResult | BackendVirtualMachineCreated
+
+
+@dataclass(frozen=True, slots=True)
+class BackendOperationSucceeded:
+    result: BackendOperationResult = BackendOperationNoResult()
 
 
 @dataclass(frozen=True, slots=True)
@@ -60,6 +75,15 @@ class OperationStorePort(Protocol):
     ) -> Result[Operation, OperationPersistenceFailure]: ...
     def get(self, operation_id: OperationId) -> Result[StoredOperation, OperationStoreError]: ...
     def complete(self, operation: Operation) -> Result[Operation, OperationStoreError]: ...
+
+
+class VirtualMachineCreateFinalizerPort(Protocol):
+    def finalize_virtual_machine_create(
+        self,
+        operation: Operation,
+        virtual_machine_id: VirtualMachineId,
+        backend_ref: BackendVirtualMachineRef,
+    ) -> Result[Operation, OperationPersistenceFailure]: ...
 
 
 class BackendOperationPort(Protocol):

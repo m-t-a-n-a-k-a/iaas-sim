@@ -2,6 +2,8 @@
 # pyright: basic, reportArgumentType=false, reportIncompatibleMethodOverride=false
 from __future__ import annotations
 
+from uuid import uuid7
+
 import pytest
 
 from iaas_sim.adapters.vsphere.adapter import (
@@ -15,6 +17,7 @@ from iaas_sim.application.virtual_machine import (
     VirtualMachineCreateSpec,
     validate_virtual_machine_create_spec,
 )
+from iaas_sim.domain.entity.virtual_machine import VirtualMachineId
 from iaas_sim.result import Err, Ok
 
 
@@ -89,7 +92,9 @@ def test_submit_create_vm_builds_blank_config_and_returns_task_ref() -> None:
     folder = FakeFolder()
     adapter = SubmissionAdapter(folder)
 
-    result = adapter.submit_create_virtual_machine(VirtualMachineCreateSpec("vm-01", 2, 2048))
+    result = adapter.submit_create_virtual_machine(
+        VirtualMachineId(uuid7()), VirtualMachineCreateSpec("vm-01", 2, 2048)
+    )
 
     assert result == Ok(BackendOperationRef("task-42"))
     assert len(folder.configs) == 1
@@ -107,7 +112,9 @@ def test_submit_create_vm_builds_blank_config_and_returns_task_ref() -> None:
 def test_unavailable_placement_is_a_typed_submission_failure() -> None:
     result = SubmissionAdapter(
         FakeFolder(), placement_available=False
-    ).submit_create_virtual_machine(VirtualMachineCreateSpec("vm-01", 1, 1024))
+    ).submit_create_virtual_machine(
+        VirtualMachineId(uuid7()), VirtualMachineCreateSpec("vm-01", 1, 1024)
+    )
 
     assert result == Err(
         VirtualMachineCreateBackendSubmissionFailure("default VM placement unavailable")
@@ -117,19 +124,14 @@ def test_unavailable_placement_is_a_typed_submission_failure() -> None:
 def test_create_task_exception_is_a_typed_submission_failure() -> None:
     result = SubmissionAdapter(
         FakeFolder(RuntimeError("submission failed"))
-    ).submit_create_virtual_machine(VirtualMachineCreateSpec("vm-01", 1, 1024))
+    ).submit_create_virtual_machine(
+        VirtualMachineId(uuid7()), VirtualMachineCreateSpec("vm-01", 1, 1024)
+    )
 
     assert result == Err(VirtualMachineCreateBackendSubmissionFailure("submission failed"))
 
 
-def test_empty_name_is_rejected_before_backend_access() -> None:
-    folder = FakeFolder()
-    result = SubmissionAdapter(folder).submit_create_virtual_machine(
-        VirtualMachineCreateSpec("", 1, 1024)
-    )
-
-    assert result == Err(VirtualMachineCreateBackendSubmissionFailure("name must not be empty"))
-    assert folder.configs == []
+def test_empty_name_is_rejected_by_application_validation() -> None:
     validated = validate_virtual_machine_create_spec(VirtualMachineCreateSpec("", 1, 1))
     assert isinstance(validated, Err)
     assert isinstance(validated.error, InvalidVirtualMachineCreateSpec)

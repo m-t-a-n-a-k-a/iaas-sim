@@ -99,7 +99,7 @@ def test_list_get_and_start_use_uuid7():
     assert port.submitted == [(REF, PowerCommand.START)]
 
 
-def test_create_virtual_machine_collection_endpoint_is_not_exposed():
+def test_create_virtual_machine_collection_requires_instance_type_store():
     response = client_for(Port()).post(
         "/v1/virtualMachines",
         json={
@@ -108,7 +108,7 @@ def test_create_virtual_machine_collection_endpoint_is_not_exposed():
         },
     )
 
-    assert response.status_code == 405
+    assert response.status_code == 500
 
 
 @pytest.mark.parametrize("invalid", ["vm-1", str(uuid4())])

@@ -19,6 +19,7 @@ from iaas_sim.adapters.sqlite.adapter import SQLiteAdapter
 from iaas_sim.adapters.sqlite.instance_type import SQLiteInstanceTypeStore
 from iaas_sim.adapters.sqlite.migration import migrate_database
 from iaas_sim.adapters.sqlite.operation import SQLiteOperationStore
+from iaas_sim.adapters.sqlite.virtual_machine_create import SQLiteVirtualMachineCreateFinalizer
 from iaas_sim.adapters.vsphere.adapter import VSphereAdapter
 from iaas_sim.adapters.vsphere.health import vcsim_health_check
 from iaas_sim.bootstrap.telemetry import configure_app_telemetry
@@ -43,9 +44,14 @@ vsphere_adapter = VSphereAdapter()
 operation_store = SQLiteOperationStore(database_path)
 instance_type_store = SQLiteInstanceTypeStore(database_path)
 sqlite_adapter = SQLiteAdapter(database_path)
+vm_create_finalizer = SQLiteVirtualMachineCreateFinalizer(database_path)
 app.include_router(create_instance_type_router(instance_type_store))
-app.include_router(create_virtual_machine_router(vsphere_adapter, sqlite_adapter, operation_store))
-app.include_router(create_operation_router(operation_store, vsphere_adapter))
+app.include_router(
+    create_virtual_machine_router(
+        vsphere_adapter, sqlite_adapter, operation_store, instance_type_store
+    )
+)
+app.include_router(create_operation_router(operation_store, vsphere_adapter, vm_create_finalizer))
 app.include_router(
     create_snapshot_router(vsphere_adapter, sqlite_adapter, sqlite_adapter, operation_store)
 )

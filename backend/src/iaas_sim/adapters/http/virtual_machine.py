@@ -1,30 +1,41 @@
 from __future__ import annotations
 
-from typing import NoReturn
+from typing import Literal, NoReturn
 from uuid import UUID, uuid7
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel, ConfigDict
 
 from iaas_sim.application.get_operation import get_operation as load_operation
 from iaas_sim.application.identity import VirtualMachineIdentityPort
+from iaas_sim.application.instance_type import (
+    InstanceTypeNotFound,
+    InstanceTypePersistenceFailure,
+    InstanceTypeStorePort,
+)
 from iaas_sim.application.operation import (
     BackendOperationPort,
     OperationNotFound,
     OperationPersistenceFailure,
     OperationStorePort,
+    VirtualMachineCreateFinalizerPort,
 )
 from iaas_sim.application.virtual_machine import (
     ApplicationError,
+    InvalidVirtualMachineCreateSpec,
     PowerCommandSubmissionFailure,
     VirtualMachineBackendFailure,
+    VirtualMachineCreateBackendSubmissionFailure,
     VirtualMachineNotFound,
     VirtualMachinePort,
+    create_virtual_machine,
     get_virtual_machine,
     list_virtual_machines,
     start_virtual_machine,
     stop_virtual_machine,
 )
+from iaas_sim.domain.entity.instance_type import InstanceTypeId
 from iaas_sim.domain.entity.operation import Failed, Operation, OperationId, Running, Succeeded
 from iaas_sim.domain.entity.virtual_machine import (
     AlreadyRunning,
@@ -39,6 +50,18 @@ UUID_VERSION_7 = 7
 # FastAPI registers nested handlers through decorators.
 # pyright cannot see that registration as a function access.
 # pyright: reportUnusedFunction=false
+
+
+class InstanceTypeReferenceRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    resourceType: Literal["instanceTypes"]
+    id: str
+
+
+class VirtualMachineCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    name: str
+    instanceType: InstanceTypeReferenceRequest
 
 
 def _vm_resource(vm: VirtualMachine) -> dict[str, str]:
@@ -68,6 +91,14 @@ def operation_resource(operation: Operation) -> dict[str, object]:
 def _raise(error: ApplicationError) -> NoReturn:
     if isinstance(error, OperationPersistenceFailure):
         raise HTTPException(status_code=500, detail="Operation persistence failed")
+    if isinstance(error, InstanceTypeNotFound):
+        raise HTTPException(status_code=404, detail="InstanceType not found")
+    if isinstance(error, InstanceTypePersistenceFailure):
+        raise HTTPException(status_code=500, detail="InstanceType persistence failed")
+    if isinstance(error, InvalidVirtualMachineCreateSpec):
+        raise HTTPException(status_code=422, detail="Invalid VirtualMachine create request")
+    if isinstance(error, VirtualMachineCreateBackendSubmissionFailure):
+        raise HTTPException(status_code=502, detail="VirtualMachine creation submission failed")
     if isinstance(error, VirtualMachineNotFound):
         raise HTTPException(status_code=404, detail="VirtualMachine not found")
     if isinstance(error, (AlreadyRunning, AlreadyStopped)):
@@ -91,10 +122,47 @@ def parse_virtual_machine_id(value: str) -> VirtualMachineId:
     return VirtualMachineId(parsed)
 
 
+def parse_instance_type_id(value: str) -> InstanceTypeId:
+    try:
+        parsed = UUID(value)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="InstanceType ID must be a UUIDv7") from exc
+    if parsed.version != UUID_VERSION_7:
+        raise HTTPException(status_code=422, detail="InstanceType ID must be a UUIDv7")
+    return InstanceTypeId(parsed)
+
+
 def create_virtual_machine_router(
-    port: VirtualMachinePort, identity: VirtualMachineIdentityPort, store: OperationStorePort
+    port: VirtualMachinePort,
+    identity: VirtualMachineIdentityPort,
+    store: OperationStorePort,
+    instance_type_store: InstanceTypeStorePort | None = None,
 ) -> APIRouter:
     router = APIRouter(prefix="/v1/virtualMachines", tags=["virtualMachines"])
+
+    @router.post("")
+    def create_vm(request: VirtualMachineCreateRequest) -> JSONResponse:
+        if instance_type_store is None:
+            raise HTTPException(status_code=500, detail="InstanceType persistence failed")
+        instance_type_id = parse_instance_type_id(request.instanceType.id)
+        operation_id = OperationId(uuid7())
+        virtual_machine_id = VirtualMachineId(uuid7())
+        result = create_virtual_machine(
+            port,
+            instance_type_store,
+            store,
+            operation_id,
+            virtual_machine_id,
+            instance_type_id,
+            request.name,
+        )
+        if isinstance(result, Err):
+            _raise(result.error)
+        return JSONResponse(
+            content=operation_resource(result.value),
+            status_code=202,
+            headers={"Location": f"/v1/operations/{result.value.id}"},
+        )
 
     @router.get("")
     def list_vms() -> dict[str, list[dict[str, str]]]:
@@ -149,14 +217,18 @@ def create_virtual_machine_router(
     return router
 
 
-def create_operation_router(store: OperationStorePort, backend: BackendOperationPort) -> APIRouter:
+def create_operation_router(
+    store: OperationStorePort,
+    backend: BackendOperationPort,
+    finalizer: VirtualMachineCreateFinalizerPort | None = None,
+) -> APIRouter:
     """Operations API: read-only endpoint for tracking async commands."""
 
     router = APIRouter(prefix="/v1/operations", tags=["operations"])
 
     @router.get("/{operation_id}")
     def get_operation(operation_id: UUID) -> dict[str, object]:
-        result = load_operation(store, backend, OperationId(operation_id))
+        result = load_operation(store, backend, OperationId(operation_id), finalizer)
         if isinstance(result, Err):
             if isinstance(result.error, OperationNotFound):
                 raise HTTPException(status_code=404, detail="Operation not found")

@@ -20,5 +20,6 @@ Snapshot public identity is a persisted UUIDv7 in Phase 2C-3. Its vSphere MOR an
 relationship remain backend/application concerns and never become public resource identity.
 
 InstanceTypes are independent top-level resources persisted in SQLite. Their names (`small`,
-`medium`, and `large`) are unique labels rather than identities. They have no backend mapping and
-are not associated with VirtualMachines until a later phase.
+`medium`, and `large`) are unique labels rather than identities. They have no backend mapping. A VirtualMachine create request references one so the Application
+resolves its sizing before submission. Creation progress exists only as an Operation; no VM lifecycle
+state is added, and the powered-off resource appears only after atomic identity finalization.
