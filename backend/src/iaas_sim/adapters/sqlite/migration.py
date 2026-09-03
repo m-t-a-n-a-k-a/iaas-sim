@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from os import PathLike
+from uuid import uuid7
 
 from iaas_sim.adapters.sqlite.connection import connect_database, transaction
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
+PREVIOUS_SCHEMA_VERSION = 2
 
 _VERSION_1_STATEMENTS = (
     """CREATE TABLE virtual_machine (
@@ -36,6 +38,21 @@ _VERSION_2_STATEMENTS = (
 ) STRICT""",
 )
 
+_VERSION_3_STATEMENTS = (
+    """CREATE TABLE instance_type (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL UNIQUE,
+    vcpus INTEGER NOT NULL CHECK (vcpus > 0),
+    memory_mib INTEGER NOT NULL CHECK (memory_mib > 0)
+) STRICT""",
+)
+
+_INITIAL_INSTANCE_TYPES = (
+    ("small", 1, 1024),
+    ("medium", 2, 2048),
+    ("large", 4, 4096),
+)
+
 
 def migrate_database(database_path: str | PathLike[str]) -> None:
     """Upgrade a database to the current schema version transactionally."""
@@ -57,3 +74,16 @@ def migrate_database(database_path: str | PathLike[str]) -> None:
                 for statement in _VERSION_2_STATEMENTS:
                     connection.execute(statement)
                 connection.execute("PRAGMA user_version = 2")
+            current_version = 2
+        if current_version == PREVIOUS_SCHEMA_VERSION:
+            with transaction(connection):
+                for statement in _VERSION_3_STATEMENTS:
+                    connection.execute(statement)
+                connection.executemany(
+                    "INSERT INTO instance_type (id, name, vcpus, memory_mib) VALUES (?, ?, ?, ?)",
+                    (
+                        (str(uuid7()), name, vcpus, memory_mib)
+                        for name, vcpus, memory_mib in _INITIAL_INSTANCE_TYPES
+                    ),
+                )
+                connection.execute("PRAGMA user_version = 3")

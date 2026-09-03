@@ -1,14 +1,16 @@
 # Architecture
 
-The Phase 2C-4 architecture remains intentionally small. VirtualMachine and Snapshot public
+The Phase 2D architecture remains intentionally small. VirtualMachine and Snapshot public
 identities are control-plane UUIDv7 values persisted by the SQLite identity adapter; vSphere MORs
 remain backend-only references. Application use cases project backend observations into Domain
 resources.
+Control-plane-owned InstanceTypes are persisted directly in SQLite with UUIDv7 public identities;
+they have no vSphere identity or mapping.
 
 ## Boundary
 
 - Domain: pure logic and immutable state modeling. No I/O and no framework imports.
-- Application: orchestration and port-based use cases for VM and Snapshot queries, async command submission, and Operation polling.
+- Application: orchestration and port-based use cases for VM, Snapshot, and InstanceType queries, async command submission, and Operation polling.
 - Adapters: concrete HTTP, vSphere, SQLite identity and Operation stores, telemetry, and external integrations.
 - Bootstrap: composition root and dependency wiring.
 
