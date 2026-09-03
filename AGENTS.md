@@ -1,6 +1,6 @@
 # AGENTS.md
 
-This repository implements Phase 2A asynchronous power operations while keeping the architecture small and explicit.
+This repository implements a small IaaS control plane while keeping its architecture explicit.
 
 Architecture:
 
@@ -25,7 +25,7 @@ API:
 Domain filesystem:
 
 - `domain/entity/{entity}/` is the baseline structure for domain entities
-- The implemented domain is limited to VirtualMachine power state/command validation and Operation status
+- VirtualMachine, Snapshot, Operation, and InstanceType are the implemented Resources; do not infer unimplemented future domain behavior.
 
 Rules:
 
@@ -58,30 +58,36 @@ Future design notes:
 - Metering: Compute Usage = VM RUNNING time; Volume Usage = provisioned GiB × existence time
 - Metering and OpenTelemetry metrics are separate concerns
 
-Phase 2A: Asynchronous Power Operations
+Current control-plane invariants:
 
+- VirtualMachine and Snapshot use control-plane UUIDv7 identities mapped to backend identities.
+- InstanceType is a control-plane-owned Resource and has no backend identity mapping.
 - VirtualMachine.power_state represents **observed backend state**, not desired state
 - Power operations (START, STOP) are asynchronous; backend-specific submission details remain in adapters
 - Domain validation (validate_power_command) is pure: checks command validity against observed state, no side effects
-- Operation entity tracks async execution: OperationId (UUIDv7) is control-plane identity, distinct from its opaque backend operation reference
+- Operation is a persistent control-plane Resource. Its state is stored in SQLite.
+- OperationId (UUIDv7) is distinct from the opaque backend operation reference, which remains internal.
 - Command acceptance (HTTP 202 Accepted) ≠ command completion
   - Synchronous failure: validation error or submission failure → HTTP 4xx/5xx
   - Asynchronous failure: backend operation failure → Operation.state = FAILED
 - No concurrent power operations policy yet (collect requirements first)
 - Backend operation identity is adapter-internal; public API uses Operation.id only
 - No transitional power states (POWERING_ON/OFF); Operation.state tracks execution
-- Phase 2A does not persist Operations; backend operation state is polled on GET /operations/{id}
+- A backend primitive for blank VM creation exists, but no public VM create endpoint or identity binding is exposed yet.
+- A RUNNING Operation's backend state is polled on GET /operations/{id}, and terminal state is persisted.
 
 Result / Railway policy:
 
 - Use a project-local Ok / Err / Result primitive; do not add external FP libraries.
 - Expected failures are typed Result values, not exceptions, and are propagated as control flow.
-- Prefer railway-style pipelines: input -> Result -> Result -> Result -> output, and stop on the first Err.
+- Application orchestration for expected failures should use Result pipelines and stop on the first Err. Do not repeatedly hand-write `result = step(...); if isinstance(result, Err): return ...` when `map`, `map_error`, and `and_then` express the same straight-line propagation.
+- Every `and_then` stage must consume the `Ok.value` produced by the immediately preceding stage. Never bypass a validated or transformed value by capturing an earlier input.
+- Semantic branching is distinct from Result propagation. Meaningful domain-state branches, ADT matches, pure validation, explicit collection traversal where clearer, and boundary unwrapping remain appropriate. Do not optimize for zero if-statements; optimize for explicit semantics and mechanical expected-failure propagation.
 - Adapter boundaries may catch external exceptions and convert them to typed Err values; domain and application code should not use try/except for expected failures.
 - Use ADT / Enum / Union + match for meaningful states; keep simple booleans and if statements where they are clearer.
 - State transitions should prefer table-driven or decision-table logic over nested if/else chains.
 - Exceptions are for unexpected programming errors and bootstrap boundary handling, not for expected domain/application failures.
-- Keep the Result API minimal; do not build a custom FP framework or broad helper ecosystem before a real need exists.
+- The intended Result primitives are `Ok`, `Err`, `Result`, `map`, `map_error`, and `and_then`. Add a combinator only after a repeated concrete need; do not build a speculative FP helper ecosystem.
 - Keep Pyright strict and readable; avoid Any, cast, or type: ignore when narrowing Result values.
 
 Testing policy:

@@ -25,6 +25,14 @@ def map[T, E, U](result: Result[T, E], function: Callable[[T], U]) -> Result[U, 
             return Err(error)
 
 
+def map_error[T, E, E2](result: Result[T, E], function: Callable[[E], E2]) -> Result[T, E2]:
+    match result:
+        case Ok(value):
+            return Ok(value)
+        case Err(error):
+            return Err(function(error))
+
+
 def and_then[T, E, U, E2](
     result: Result[T, E], function: Callable[[T], Result[U, E2]]
 ) -> Result[U, E | E2]:

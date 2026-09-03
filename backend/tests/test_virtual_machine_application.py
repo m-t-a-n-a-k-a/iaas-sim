@@ -4,6 +4,7 @@ from uuid import uuid7
 
 import pytest
 
+import iaas_sim.application.virtual_machine as virtual_machine_application
 from iaas_sim.adapters.memory.operation import InMemoryOperationStore
 from iaas_sim.application.identity import BackendVirtualMachineRef, VirtualMachineIdentityNotFound
 from iaas_sim.application.operation import BackendOperationRef
@@ -21,6 +22,7 @@ from iaas_sim.application.virtual_machine import (
 )
 from iaas_sim.domain.entity.operation import OperationId
 from iaas_sim.domain.entity.virtual_machine import (
+    AcceptedPowerCommand,
     AlreadyRunning,
     AlreadyStopped,
     PowerCommand,
@@ -131,3 +133,20 @@ def test_power_submission_failure_maps_to_public_identity():
     )
     assert result == Err(PowerCommandSubmissionFailure(VM_ID, "failure for vm-1"))
     assert result.error.virtual_machine_id == VM_ID
+
+
+def test_power_pipeline_passes_validated_command_to_later_stages(monkeypatch) -> None:
+    port = Port(PowerState.STOPPED)
+    monkeypatch.setattr(
+        virtual_machine_application,
+        "validate_power_command",
+        lambda vm, command: Ok(AcceptedPowerCommand(vm.id, PowerCommand.STOP)),
+    )
+
+    result = start_virtual_machine(
+        port, Identity(), InMemoryOperationStore(), OperationId(uuid7()), VM_ID
+    )
+
+    assert isinstance(result, Ok)
+    assert port.submissions == [(REF, PowerCommand.STOP)]
+    assert result.value.action == PowerCommand.STOP.value
