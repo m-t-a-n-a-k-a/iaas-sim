@@ -98,22 +98,22 @@ def test_terminal_compare_and_set_never_overwrites_terminal_state(tmp_path: Path
     assert store.complete(failed) == Ok(succeeded)
 
 
-def test_unknown_malformed_and_sqlite_failures_are_typed(tmp_path: Path) -> None:
+def test_unknown_uuid4_and_sqlite_failures_are_typed(tmp_path: Path) -> None:
     path = tmp_path / "db.sqlite"
     migrate_database(path)
     unknown = OperationId(uuid7())
     assert SQLiteOperationStore(path).get(unknown) == Err(OperationNotFound(unknown))
-    malformed_id = OperationId(uuid4())
+    uuid4_id = OperationId(uuid4())
     with connect_database(path) as connection:
         connection.execute(
             """INSERT INTO operation VALUES (?, 'virtualMachines', 'vm', 'START',
             'RUNNING', NULL, 'task-bad')""",
-            (str(malformed_id.value),),
+            (str(uuid4_id),),
         )
         connection.commit()
-    malformed = SQLiteOperationStore(path).get(malformed_id)
-    assert isinstance(malformed, Err)
-    assert isinstance(malformed.error, OperationPersistenceFailure)
+    invalid_version = SQLiteOperationStore(path).get(uuid4_id)
+    assert isinstance(invalid_version, Err)
+    assert isinstance(invalid_version.error, OperationPersistenceFailure)
     broken = tmp_path / "missing" / "db.sqlite"
     failure = SQLiteOperationStore(broken).create_running(_operation(), BackendOperationRef("task"))
     assert isinstance(failure, Err) and isinstance(failure.error, OperationPersistenceFailure)

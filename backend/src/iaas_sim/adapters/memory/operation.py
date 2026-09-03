@@ -5,7 +5,7 @@ from iaas_sim.application.operation import (
     OperationStoreError,
     StoredOperation,
 )
-from iaas_sim.domain.entity.operation import Operation, OperationId, Running
+from iaas_sim.domain.entity.operation import Operation, OperationId, Running, is_terminal
 from iaas_sim.result import Err, Ok, Result
 
 
@@ -35,9 +35,9 @@ class InMemoryOperationStore:
         stored = self._operations.get(operation.id)
         if stored is None:
             return Err(OperationNotFound(operation.id))
-        if stored.operation.is_terminal():
+        if is_terminal(stored.operation.status):
             return Ok(stored.operation)
-        if not operation.is_terminal():
+        if not is_terminal(operation.status):
             return Err(OperationPersistenceFailure("complete", "status is not terminal"))
         self._operations[operation.id] = StoredOperation(operation, stored.backend_ref)
         return Ok(operation)

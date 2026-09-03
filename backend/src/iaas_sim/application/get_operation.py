@@ -16,6 +16,7 @@ from iaas_sim.domain.entity.operation import (
     OperationFailure,
     OperationId,
     Succeeded,
+    is_terminal,
 )
 from iaas_sim.result import Ok, Result, and_then, map_error
 
@@ -31,7 +32,7 @@ def get_operation(
     store: OperationStorePort, backend: BackendOperationPort, operation_id: OperationId
 ) -> Result[Operation, GetOperationError]:
     def poll(stored: StoredOperation) -> Result[Operation, GetOperationError]:
-        if stored.operation.is_terminal():
+        if is_terminal(stored.operation.status):
             return Ok(stored.operation)
 
         def reconcile(status: BackendOperationStatus) -> Result[Operation, GetOperationError]:

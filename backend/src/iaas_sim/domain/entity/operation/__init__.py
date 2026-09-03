@@ -1,16 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import NewType
 from uuid import UUID
 
 from iaas_sim.domain.resource_reference import ResourceReference
 
-
-@dataclass(frozen=True, slots=True)
-class OperationId:
-    """Control-plane identity, independent of any backend operation identity."""
-
-    value: UUID
+OperationId = NewType("OperationId", UUID)
 
 
 @dataclass(frozen=True, slots=True)
@@ -43,5 +39,10 @@ class Operation:
     action: str
     status: OperationStatus
 
-    def is_terminal(self) -> bool:
-        return isinstance(self.status, (Succeeded, Failed))
+
+def is_terminal(status: OperationStatus) -> bool:
+    match status:
+        case Running():
+            return False
+        case Succeeded() | Failed():
+            return True

@@ -92,6 +92,9 @@ def test_list_get_and_start_use_uuid7():
     assert client.get(f"/v1/virtualMachines/{VM_ID}").status_code == 200
     response = client.post(f"/v1/virtualMachines/{VM_ID}:start")
     assert response.status_code == 202
+    operation_id = response.json()["id"]
+    assert UUID(operation_id).version == 7
+    assert response.headers["location"] == f"/v1/operations/{operation_id}"
     assert response.json()["target"]["id"] == str(VM_ID)
     assert port.submitted == [(REF, PowerCommand.START)]
 

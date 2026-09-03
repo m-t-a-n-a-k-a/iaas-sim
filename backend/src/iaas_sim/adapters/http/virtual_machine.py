@@ -54,7 +54,7 @@ def operation_resource(operation: Operation) -> dict[str, object]:
         case Failed(error):
             state, failure = "FAILED", {"reason": error.reason}
     return {
-        "id": str(operation.id.value),
+        "id": str(operation.id),
         "target": {
             "resourceType": operation.target.resource_type,
             "id": operation.target.resource_id,
@@ -127,7 +127,7 @@ def create_virtual_machine_router(
                 return JSONResponse(
                     content=operation_resource(operation),
                     status_code=202,
-                    headers={"Location": f"/v1/operations/{operation.id.value}"},
+                    headers={"Location": f"/v1/operations/{operation.id}"},
                 )
 
     @router.post("/{virtual_machine_id}:stop")
@@ -143,7 +143,7 @@ def create_virtual_machine_router(
                 return JSONResponse(
                     content=operation_resource(operation),
                     status_code=202,
-                    headers={"Location": f"/v1/operations/{operation.id.value}"},
+                    headers={"Location": f"/v1/operations/{operation.id}"},
                 )
 
     return router

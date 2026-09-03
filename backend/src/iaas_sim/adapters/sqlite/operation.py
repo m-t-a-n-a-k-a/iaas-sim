@@ -44,7 +44,7 @@ class SQLiteOperationStore:
                      failure_reason, backend_ref)
                     VALUES (?, ?, ?, ?, 'RUNNING', NULL, ?)""",
                     (
-                        str(operation.id.value),
+                        str(operation.id),
                         operation.target.resource_type,
                         operation.target.resource_id,
                         operation.action,
@@ -61,7 +61,7 @@ class SQLiteOperationStore:
                 row = connection.execute(
                     """SELECT id, target_resource_type, target_resource_id, action,
                     state, failure_reason, backend_ref FROM operation WHERE id = ?""",
-                    (str(operation_id.value),),
+                    (str(operation_id),),
                 ).fetchone()
             if row is None:
                 return Err(OperationNotFound(operation_id))
@@ -84,14 +84,14 @@ class SQLiteOperationStore:
                 cursor = connection.execute(
                     """UPDATE operation SET state = ?, failure_reason = ?
                     WHERE id = ? AND state = 'RUNNING'""",
-                    (state, failure_reason, str(operation.id.value)),
+                    (state, failure_reason, str(operation.id)),
                 )
                 if cursor.rowcount == 1:
                     return Ok(operation)
                 row = connection.execute(
                     """SELECT id, target_resource_type, target_resource_id, action,
                     state, failure_reason, backend_ref FROM operation WHERE id = ?""",
-                    (str(operation.id.value),),
+                    (str(operation.id),),
                 ).fetchone()
                 if row is None:
                     return Err(OperationNotFound(operation.id))
