@@ -33,7 +33,7 @@ from iaas_sim.domain.entity.virtual_machine import (
     validate_power_command,
 )
 from iaas_sim.domain.resource_reference import ResourceReference
-from iaas_sim.result import Err, Ok, Result, ResultUnwrapper, map_error, result_workflow
+from iaas_sim.result import Err, Ok, Result, ResultUnwrapper, result_workflow
 
 
 @dataclass(frozen=True, slots=True)
@@ -260,36 +260,28 @@ def execute_power_command(  # noqa: PLR0917
     virtual_machine_id: VirtualMachineId,
     command: PowerCommand,
 ) -> Operation:
-    backend_ref = unwrap(
-        map_error(
-            identity.get_backend_ref(virtual_machine_id),
-            lambda error: _identity_error(error, virtual_machine_id),
-        )
+    backend_ref = unwrap.map_error(
+        identity.get_backend_ref(virtual_machine_id),
+        lambda error: _identity_error(error, virtual_machine_id),
     )
-    observed = unwrap(
-        map_error(
-            port.get_virtual_machine(backend_ref),
-            lambda error: _observation_error(error, virtual_machine_id),
-        )
+    observed = unwrap.map_error(
+        port.get_virtual_machine(backend_ref),
+        lambda error: _observation_error(error, virtual_machine_id),
     )
-    accepted: AcceptedPowerCommand = unwrap(
-        map_error(
-            validate_power_command(
-                VirtualMachine(
-                    virtual_machine_id,
-                    observed.name,
-                    observed.power_state,
-                ),
-                command,
+    accepted: AcceptedPowerCommand = unwrap.map_error(
+        validate_power_command(
+            VirtualMachine(
+                virtual_machine_id,
+                observed.name,
+                observed.power_state,
             ),
-            _as_application_error,
-        )
+            command,
+        ),
+        _as_application_error,
     )
-    backend_operation_ref = unwrap(
-        map_error(
-            port.submit_power_command(backend_ref, accepted.command),
-            lambda error: _submission_error(error, virtual_machine_id),
-        )
+    backend_operation_ref = unwrap.map_error(
+        port.submit_power_command(backend_ref, accepted.command),
+        lambda error: _submission_error(error, virtual_machine_id),
     )
     operation = Operation(
         operation_id,
@@ -297,11 +289,9 @@ def execute_power_command(  # noqa: PLR0917
         accepted.command.value,
         Running(),
     )
-    return unwrap(
-        map_error(
-            store.create_running(operation, backend_operation_ref),
-            _as_application_error,
-        )
+    return unwrap.map_error(
+        store.create_running(operation, backend_operation_ref),
+        _as_application_error,
     )
 
 

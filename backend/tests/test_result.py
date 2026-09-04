@@ -32,6 +32,15 @@ class WorkflowError:
     stage: str
 
 
+@dataclass(frozen=True)
+class SourceError:
+    stage: str
+
+
+def _map_source_error(error: SourceError) -> WorkflowError:
+    return WorkflowError(error.stage)
+
+
 def _integer_step(failure: WorkflowError | None = None) -> Result[int, WorkflowError]:
     return Err(failure) if failure is not None else Ok(3)
 
@@ -121,6 +130,68 @@ def test_result_workflow_does_not_catch_unexpected_exception() -> None:
 def test_result_workflow_state_is_fresh_for_repeated_calls() -> None:
     assert _heterogeneous_workflow("first") == Err(WorkflowError("first"))
     assert _heterogeneous_workflow() == Ok(FinalValue(1))
+
+
+def test_result_unwrapper_map_error_returns_mapped_ok_value() -> None:
+    @result_workflow
+    def workflow(unwrap: ResultUnwrapper[WorkflowError]) -> int:
+        result: Result[int, SourceError] = Ok(3)
+        return unwrap.map_error(result, _map_source_error)
+
+    assert workflow() == Ok(3)
+
+
+def test_result_unwrapper_map_error_maps_error_and_short_circuits() -> None:
+    later_called = False
+
+    @result_workflow
+    def workflow(unwrap: ResultUnwrapper[WorkflowError]) -> int:
+        nonlocal later_called
+        result: Result[int, SourceError] = Err(SourceError("mapped"))
+        unwrap.map_error(result, _map_source_error)
+        later_called = True
+        return 0
+
+    assert workflow() == Err(WorkflowError("mapped"))
+    assert not later_called
+
+
+def test_result_unwrapper_map_error_supports_heterogeneous_success_values() -> None:
+    @result_workflow
+    def workflow(unwrap: ResultUnwrapper[WorkflowError]) -> FinalValue:
+        integer = unwrap.map_error(Ok[int](3), _map_source_error)
+        text = unwrap.map_error(Ok[str](str(integer)), _map_source_error)
+        intermediate = unwrap.map_error(Ok[Intermediate](Intermediate(text)), _map_source_error)
+        return FinalValue(len(intermediate.text))
+
+    assert workflow() == Ok(FinalValue(1))
+
+
+def test_result_unwrapper_map_error_does_not_catch_mapper_exception() -> None:
+    def fail_mapping(_error: SourceError) -> WorkflowError:
+        raise RuntimeError("unexpected mapper failure")
+
+    @result_workflow
+    def workflow(unwrap: ResultUnwrapper[WorkflowError]) -> int:
+        result: Result[int, SourceError] = Err(SourceError("source"))
+        return unwrap.map_error(result, fail_mapping)
+
+    with pytest.raises(RuntimeError, match="unexpected mapper failure"):
+        workflow()
+
+
+def test_result_unwrapper_map_error_state_is_fresh_for_repeated_calls() -> None:
+    calls = 0
+
+    @result_workflow
+    def workflow(unwrap: ResultUnwrapper[WorkflowError]) -> int:
+        nonlocal calls
+        calls += 1
+        result: Result[int, SourceError] = Err(SourceError("first")) if calls == 1 else Ok(3)
+        return unwrap.map_error(result, _map_source_error)
+
+    assert workflow() == Err(WorkflowError("first"))
+    assert workflow() == Ok(3)
 
 
 def test_nested_result_workflows_short_circuit_independently() -> None:
