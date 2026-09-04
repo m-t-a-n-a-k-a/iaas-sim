@@ -8,33 +8,33 @@ The complete, executable control plane remains the Python 3.14 implementation in
 
 `VirtualMachine.power_state` is observed backend state, not desired state. Command acceptance is not command completion: accepted asynchronous commands return `202 Accepted` and are tracked by durable `Operation` Resources through completion or failure.
 
-The target backend is Kotlin/JVM with Ktor and Maven. Its current Phase K0 implementation in `backend-kotlin/` is only an executable skeleton with a liveness endpoint; no business feature has been migrated.
+The target backend is Kotlin/JVM with Ktor and Maven. Phase K0 established the executable skeleton and liveness endpoint in `backend-kotlin/`; Phase K1 now provides its immutable VirtualMachine Domain model, pure power-command validation, and typed expected-failure foundation. No business HTTP API has been migrated.
 
 ## Incremental Kotlin migration
 
 Migration is incremental rather than a big-bang rewrite. The Python backend remains the executable behavior and architecture reference while vertical slices move to Kotlin in later phases:
 
-- **K0 (current):** executable Kotlin/Ktor/Maven skeleton
-- **K1:** Kotlin-native Domain and expected-failure modeling
-- **K2:** VirtualMachine read vertical slice
+- **K0 (complete):** executable Kotlin/Ktor/Maven skeleton
+- **K1 (complete):** Kotlin-native Domain and expected-failure foundation
+- **K2 (next):** VirtualMachine read vertical slice
 - **K3:** VirtualMachine command / Operation vertical slice
 
 ## Architecture and expected failures
 
 The language-independent architecture combines Functional Core + Imperative Shell with Hexagonal Architecture. Immutable, pure Domain rules are orchestrated by the Application layer through Ports, infrastructure remains in Adapters, and expected failures are typed.
 
-In the current Python reference, the project-local `Result`, `result_workflow`, and `ResultUnwrapper` are focused implementation techniques for expected-failure propagation, not a general FP framework or a Kotlin migration requirement. Kotlin-native expected-failure modeling is deliberately deferred to K1.
+In the current Python reference, the project-local `Result`, `result_workflow`, and `ResultUnwrapper` are focused implementation techniques for expected-failure propagation, not a general FP framework or a Kotlin migration requirement. Kotlin uses its own minimal, project-local `Outcome<T, E>` sealed type to represent success and typed expected failure without exceptions or speculative combinators.
 
 ## Stack
 
 - Current control plane: Python 3.14, FastAPI, Uvicorn, pyVmomi, and SQLite
-- Target skeleton: Kotlin 2.4.10/JVM, Ktor 3.5.2, Maven 3.9.16, and JDK 21
+- Target backend foundation: Kotlin 2.4.10/JVM, Ktor 3.5.2, Maven 3.9.16, and JDK 21
 - Svelte, TypeScript, and Vite
 - Docker Compose with `vcsim`, OpenTelemetry, and Grafana/otel-lgtm
 
 ## Running the two backends
 
-Normal Kotlin skeleton operations use Make:
+Normal Kotlin backend operations use Make:
 
 ```bash
 make kotlin-run
@@ -42,7 +42,7 @@ make kotlin-test
 make kotlin-verify
 ```
 
-`make kotlin-run` starts the Phase K0 skeleton at http://localhost:8080/health. This endpoint only proves that the Kotlin process can serve HTTP; it does not reproduce the Python endpoint's operational probes. The lower-level equivalent is `cd backend-kotlin && ./mvnw ...`; a system Maven installation is not required.
+`make kotlin-run` starts the executable skeleton from Phase K0 at http://localhost:8080/health. This endpoint only proves that the Kotlin process can serve HTTP; it does not reproduce the Python endpoint's operational probes. Phase K1 adds Domain code but no business endpoint. The lower-level equivalent is `cd backend-kotlin && ./mvnw ...`; a system Maven installation is not required.
 
 `make up` continues to start the current Python application through Docker Compose. Its health endpoint is http://localhost:8000/health, with API documentation at http://localhost:8000/docs and the UI at http://localhost:8000/ui. Stop it with `make down`.
 
@@ -65,4 +65,4 @@ The dev container includes Python 3.14, uv, Node.js 24, Docker-in-Docker, and JD
 
 ## Current limitations
 
-The intended Python application path connects to `vcsim` over HTTPS inside the Docker Compose network; host-side `127.0.0.1` access is only an incidental port-publishing path. The Kotlin skeleton has no business APIs, persistence, authentication, authorization, VMware integration, or observability. IAM, metering, queues, retry policy, and broader cloud-domain behavior are not yet implemented. `make verify` enforces the Python, Kotlin, frontend, architecture, smoke, and Compose checks.
+The intended Python application path connects to `vcsim` over HTTPS inside the Docker Compose network; host-side `127.0.0.1` access is only an incidental port-publishing path. The Kotlin backend has a K1 Domain foundation but no business HTTP APIs, Application use cases, Ports, Adapters, persistence, authentication, authorization, VMware integration, or observability. IAM, metering, queues, retry policy, and broader cloud-domain behavior are not yet implemented. `make verify` enforces the Python, Kotlin, frontend, architecture, smoke, and Compose checks.

@@ -1,8 +1,13 @@
 # Kotlin backend
 
-`backend-kotlin/` is the Phase K0 executable skeleton for the incremental target
-backend. It uses Kotlin/JVM, Ktor, Maven, and JDK 21. No business functionality
-has been migrated yet.
+`backend-kotlin/` is the incremental target backend. Phase K0 delivered its
+executable Kotlin/JVM, Ktor, Maven, and JDK 21 skeleton. Phase K1 adds the
+immutable VirtualMachine Domain model, pure power-command validation, and the
+minimal typed `Outcome<T, E>` expected-failure primitive.
+
+The next phase is K2, the VirtualMachine read vertical slice. This backend still
+has no business HTTP API, persistence, Application layer, Ports, Adapters, or
+VMware integration.
 
 Use the repository-level commands for normal development:
 
