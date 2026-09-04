@@ -5,10 +5,14 @@
     "ghcr.io/devcontainers/features/node:1": {
       "version": "24"
     },
+    "ghcr.io/devcontainers/features/java:1": {
+      "version": "21",
+      "installMaven": false
+    },
     "ghcr.io/devcontainers/features/docker-in-docker:2": {}
   },
   "postCreateCommand": "cd /workspaces/iaas-sim && python3 -m pip install --user uv && ~/.local/bin/uv python install 3.14",
-  "forwardPorts": [8000, 3000, 4317, 4318, 5556],
+  "forwardPorts": [8000, 8080, 3000, 4317, 4318, 5556],
   "customizations": {
     "vscode": {
       "settings": {

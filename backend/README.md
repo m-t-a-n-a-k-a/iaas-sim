@@ -1,3 +1,5 @@
 # iaas-sim backend
 
-Phase 1 backend skeleton for the iaas-sim project.
+This directory contains the current Python executable reference implementation.
+It remains the behavior and architecture reference while the Kotlin backend is
+migrated incrementally in `backend-kotlin/`.
