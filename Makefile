@@ -1,5 +1,7 @@
 .PHONY: prepare up down reset logs verify backend-verify kotlin-run kotlin-test kotlin-verify frontend-verify smoke-test .env
 
+NPM_INSTALL_COMMAND ?= npm install
+
 .env:
 	cp -n .env.example .env 2>/dev/null || true
 
@@ -49,7 +51,7 @@ kotlin-verify:
 	cd backend-kotlin && ./mvnw verify
 
 frontend-verify:
-	cd frontend && npm install
+	cd frontend && $(NPM_INSTALL_COMMAND)
 	cd frontend && npx svelte-check --tsconfig ./tsconfig.json
 	cd frontend && npm run build
 
