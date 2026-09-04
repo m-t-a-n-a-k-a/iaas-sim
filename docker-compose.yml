@@ -38,6 +38,8 @@ services:
   vcsim:
     image: vmware/vcsim:v0.56.0
     container_name: vcsim
+    ports:
+      - "127.0.0.1:8989:8989"
     command:
       - "-l"
       - "0.0.0.0:8989"

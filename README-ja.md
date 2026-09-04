@@ -8,7 +8,7 @@
 
 `VirtualMachine.power_state` は希望状態ではなく、バックエンドから観測した状態です。コマンドの受付は完了を意味しません。受け付けた非同期コマンドには `202 Accepted` を返し、完了または失敗まで永続的な `Operation` Resource で追跡します。
 
-移行先 backend は Kotlin/JVM、Ktor、Maven を使用します。Phase K0 で `backend-kotlin/` の実行可能 skeleton と liveness endpoint を構築し、Phase K1 で immutable な VirtualMachine Domain model、純粋な power-command validation、型付けされた expected-failure 基盤を追加しました。business HTTP API はまだ移植していません。
+移行先 backend は Kotlin/JVM、Ktor、Maven を使用します。Phase K0 と K1 で実行可能 skeleton、immutable な VirtualMachine Domain model、純粋な power-command validation、型付けされた expected-failure 基盤を構築しました。Phase K2 では最初の business vertical slice として、HTTP から Application Port と公式 VMware SDK を経由して live `vcsim` を読む VirtualMachine list/get と、一時的な process-local UUIDv7 identity mapping を追加しました。
 
 ## Kotlin への段階的移行
 
@@ -16,8 +16,8 @@
 
 - **K0（完了）:** 実行可能な Kotlin/Ktor/Maven skeleton
 - **K1（完了）:** Kotlin-native Domain と expected-failure 基盤
-- **K2（次）:** VirtualMachine read vertical slice
-- **K3:** VirtualMachine command / Operation vertical slice
+- **K2（完了）:** VirtualMachine read vertical slice
+- **K3（次）:** VirtualMachine command / Operation vertical slice
 
 ## アーキテクチャと expected failure
 
@@ -42,7 +42,7 @@ make kotlin-test
 make kotlin-verify
 ```
 
-`make kotlin-run` は Phase K0 で作成した executable skeleton を http://localhost:8080/health で起動します。この endpoint は Kotlin process が HTTP を処理できることだけを示し、Python endpoint の operational probe は再実装しません。Phase K1 は Domain code を追加しましたが、business endpoint は追加していません。下位レベルでは `cd backend-kotlin && ./mvnw ...` を使用でき、system Maven installation は不要です。
+`make kotlin-run` は `vcsim` と Kotlin server を起動します。http://localhost:8080/health と http://localhost:8080/v1/virtualMachines を確認できます。health は liveness のみで、K2 の list/get response は live simulator の観測状態を読みます。下位レベルでは `cd backend-kotlin && ./mvnw ...` を使用でき、system Maven installation は不要です。
 
 `make up` は引き続き現在の Python application を Docker Compose で起動します。health endpoint は http://localhost:8000/health、API documentation は http://localhost:8000/docs、UI は http://localhost:8000/ui です。停止には `make down` を使用します。
 
@@ -65,4 +65,4 @@ dev container は Python 3.14、uv、Node.js 24、Docker-in-Docker、JDK 21 を�
 
 ## 現在の制限
 
-意図された Python application 経路は Docker Compose network 内で `vcsim` に HTTPS 接続するものであり、host 側の `127.0.0.1` は付随的な port-publishing 経路にすぎません。Kotlin backend には K1 Domain 基盤がありますが、business HTTP API、Application use case、Port、Adapter、永続化、認証、認可、VMware integration、observability はありません。IAM、metering、queue、retry policy、より広範な cloud-domain behavior は未実装です。`make verify` は Python、Kotlin、frontend、architecture、smoke、Compose の check を実行します。
+Python application は Docker Compose 内から `vcsim` へ接続し、K2 では host で動く Kotlin backend のため `vcsim` を host loopback のみに公開します。Kotlin は health と、live VMware integration を用いた VirtualMachine list/get read を実装しています。public identity mapping は一時的な process-local memory であり、再起動時に失われます。これは最終 persistence ではなく移行 infrastructure です。SQLite、command、認証、認可、observability は未移植です。IAM、metering、queue、retry policy、より広範な cloud-domain behavior は未実装です。`make verify` は Python、Kotlin、frontend、architecture、smoke、Compose の check を実行します。

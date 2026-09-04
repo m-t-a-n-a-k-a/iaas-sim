@@ -1,21 +1,23 @@
 # Kotlin backend
 
-`backend-kotlin/` is the incremental target backend. Phase K0 delivered its
-executable Kotlin/JVM, Ktor, Maven, and JDK 21 skeleton. Phase K1 adds the
-immutable VirtualMachine Domain model, pure power-command validation, and the
-minimal typed `Outcome<T, E>` expected-failure primitive.
+`backend-kotlin/` is the incremental target backend. K0 delivered the executable
+Ktor/Maven/JDK 21 skeleton, K1 the Domain and minimal `Outcome<T, E>`, and K2 the
+VirtualMachine read vertical slice. K2 provides health, VirtualMachine list and
+get, official VMware SDK integration with live `vcsim`, and process-local UUIDv7
+public identity mapping.
 
-The next phase is K2, the VirtualMachine read vertical slice. This backend still
-has no business HTTP API, persistence, Application layer, Ports, Adapters, or
-VMware integration.
-
-Use the repository-level commands for normal development:
+Run from the repository root:
 
 ```bash
 make kotlin-run
-make kotlin-test
-make kotlin-verify
 ```
 
-The committed Maven Wrapper uses the official `only-script` mode, so it pins and
-downloads Maven without a wrapper JAR or a system Maven requirement.
+Then check:
+
+- `GET http://localhost:8080/health`
+- `GET http://localhost:8080/v1/virtualMachines`
+
+Use `make kotlin-test` and `make kotlin-verify` for checks. The Maven Wrapper uses
+official `only-script` mode. K2 identity mappings are temporary in-memory state
+and are lost when the Kotlin process restarts. SQLite persistence, commands,
+START/STOP, and Operations are not migrated; K3 is next.

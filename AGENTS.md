@@ -19,6 +19,7 @@ Migration status:
 - `backend/` is the current Python executable, behavior, and architecture reference implementation.
 - `backend-kotlin/` is the incremental target implementation.
 - Migration proceeds incrementally through vertical slices, not as a big-bang rewrite.
+- K0, K1, and K2 are complete; K3 is next.
 - Do not port behavior beyond the explicitly requested migration phase.
 
 Kotlin principles:
@@ -37,6 +38,13 @@ Kotlin expected-failure policy:
 - Expected failures are values, not `Exception` or `Throwable` types.
 - Keep `Outcome` minimal rather than growing it into an FP helper ecosystem.
 - Add helpers or combinators only after concrete repeated use demonstrates a need.
+
+Kotlin K2 architecture:
+
+- Application depends on Ports, not concrete Adapters.
+- VMware SDK types and exceptions stay inside the vSphere Adapter.
+- A backend MOR is never a public Resource identity.
+- The Kotlin K2 in-memory identity mapping is temporary migration infrastructure, not final persistence.
 
 Kotlin build simplicity:
 
