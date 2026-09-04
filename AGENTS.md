@@ -8,7 +8,7 @@ Architecture:
 - Functional Core + Imperative Shell
 - Hexagonal Architecture
 - Domain purity
-- strict Python typing
+- strict static typing
 - Adapter-to-adapter direct dependency forbidden
 - Operational health is not Domain
 - `make verify` is required
@@ -29,6 +29,14 @@ Kotlin principles:
 - Handle VMware Java SDK exceptions at Adapter boundaries.
 - As a rule, do not use `!!`, unchecked casts, or `Any` as typing escape hatches.
 - Do not add speculative framework abstractions.
+
+Kotlin expected-failure policy:
+
+- Model expected Domain and Application failures with the project-local, typed `Outcome<T, E>`.
+- Do not use `kotlin.Result` for expected Domain or Application failures.
+- Expected failures are values, not `Exception` or `Throwable` types.
+- Keep `Outcome` minimal rather than growing it into an FP helper ecosystem.
+- Add helpers or combinators only after concrete repeated use demonstrates a need.
 
 Kotlin build simplicity:
 
@@ -113,7 +121,7 @@ Current control-plane invariants:
 Result policy (current Python reference implementation only):
 
 This policy describes the Python implementation technique. It is not a mandatory
-Kotlin design. Kotlin expected-failure modeling is intentionally deferred to Phase K1.
+Kotlin design; the Kotlin policy is defined separately above.
 
 - Use a project-local Ok / Err / Result primitive; do not add external FP libraries.
 - Expected failures are typed Result values, not exceptions, and are propagated as control flow.
@@ -136,7 +144,8 @@ Kotlin design. Kotlin expected-failure modeling is intentionally deferred to Pha
 
 Testing policy:
 
-- When behavior is determined by combinations of finite states, commands, roles, scopes, or inputs, prefer table-driven tests using pytest.mark.parametrize.
+- When behavior is determined by combinations of finite states, commands, roles, scopes, or inputs, prefer table-driven tests that expose the relevant state space explicitly.
+- In Python, use `pytest.mark.parametrize` for such tables.
 - The table should expose the relevant state space explicitly rather than duplicating one test function per case.
 - Use descriptive pytest.param(..., id="...") identifiers.
 - Do not force parametrization onto one-off integration/smoke tests where there is no meaningful case matrix.
