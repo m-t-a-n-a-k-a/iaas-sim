@@ -201,29 +201,32 @@ def list_virtual_machines(
     return tuple(projected)
 
 
+@result_workflow
 def get_virtual_machine(
+    unwrap: ResultUnwrapper[ApplicationError],
     port: VirtualMachinePort,
     identity: VirtualMachineIdentityPort,
     virtual_machine_id: VirtualMachineId,
-) -> Result[VirtualMachine, ApplicationError]:
-    resolved = identity.get_backend_ref(virtual_machine_id)
-    if isinstance(resolved, Err):
-        return Err(_identity_error(resolved.error, virtual_machine_id))
+) -> VirtualMachine:
+    backend_ref = unwrap.map_error(
+        identity.get_backend_ref(virtual_machine_id),
+        lambda error: _identity_error(error, virtual_machine_id),
+    )
+    observed = unwrap.map_error(
+        port.get_virtual_machine(backend_ref),
+        lambda error: _observation_error(error, virtual_machine_id),
+    )
 
-    observed = port.get_virtual_machine(resolved.value)
-    if isinstance(observed, Err):
-        if isinstance(observed.error, VirtualMachineBackendNotFound):
-            return Err(VirtualMachineNotFound(virtual_machine_id))
-        return Err[ApplicationError](observed.error)
-
-    marker = observed.value.creation_virtual_machine_id
+    marker = observed.creation_virtual_machine_id
     if marker is not None and marker != virtual_machine_id:
-        return Err[ApplicationError](
-            VirtualMachineIdentityPersistenceFailure(
-                "get", "creation marker does not match requested identity"
+        return unwrap(
+            Err[ApplicationError](
+                VirtualMachineIdentityPersistenceFailure(
+                    "get", "creation marker does not match requested identity"
+                )
             )
         )
-    return Ok(VirtualMachine(virtual_machine_id, observed.value.name, observed.value.power_state))
+    return VirtualMachine(virtual_machine_id, observed.name, observed.power_state)
 
 
 def create_virtual_machine(  # noqa: PLR0917
