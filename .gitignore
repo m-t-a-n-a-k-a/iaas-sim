@@ -10,6 +10,7 @@ node_modules/
 frontend/dist/
 backend/.venv/
 backend/.pytest_cache/
+backend-kotlin/target/
 .vscode/
 .DS_Store
 *.db

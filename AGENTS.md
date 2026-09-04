@@ -13,6 +13,31 @@ Architecture:
 - Operational health is not Domain
 - `make verify` is required
 
+Migration status:
+
+- The target backend language is Kotlin/JVM, built with Maven.
+- `backend/` is the current Python executable, behavior, and architecture reference implementation.
+- `backend-kotlin/` is the incremental target implementation.
+- Migration proceeds incrementally through vertical slices, not as a big-bang rewrite.
+- Do not port behavior beyond the explicitly requested migration phase.
+
+Kotlin principles:
+
+- Prefer immutable data and `val`; prefer `data class` for immutable data.
+- Model meaningful finite states with `sealed interface` or `enum class`, and branch with exhaustive `when` expressions.
+- Do not allow unchecked Java nullable or platform types to flow into Domain or Application code.
+- Handle VMware Java SDK exceptions at Adapter boundaries.
+- As a rule, do not use `!!`, unchecked casts, or `Any` as typing escape hatches.
+- Do not add speculative framework abstractions.
+
+Kotlin build simplicity:
+
+- Use a single-module Maven build and the official Maven Wrapper `only-script` mode.
+- Pin a stable Maven 3 release and use JDK 21; do not use Gradle.
+- Do not add Maven profiles or split into multiple modules without a concrete requirement.
+- Do not add custom Maven extensions or a build-framework ecosystem.
+- Prefer top-level Makefile targets for developer-facing commands.
+
 API:
 
 - Entity -> top-level Resource
@@ -85,7 +110,10 @@ Current control-plane invariants:
 - A RUNNING Operation's backend state is polled on GET /operations/{id}, and terminal state is persisted.
 - A SUCCEEDED VirtualMachine CREATE Operation requires an exact persisted future-ID to backend-ref mapping.
 
-Result policy:
+Result policy (current Python reference implementation only):
+
+This policy describes the Python implementation technique. It is not a mandatory
+Kotlin design. Kotlin expected-failure modeling is intentionally deferred to Phase K1.
 
 - Use a project-local Ok / Err / Result primitive; do not add external FP libraries.
 - Expected failures are typed Result values, not exceptions, and are propagated as control flow.

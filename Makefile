@@ -1,4 +1,4 @@
-.PHONY: prepare up down reset logs verify backend-verify frontend-verify smoke-test .env
+.PHONY: prepare up down reset logs verify backend-verify kotlin-run kotlin-test kotlin-verify frontend-verify smoke-test .env
 
 .env:
 	cp -n .env.example .env 2>/dev/null || true
@@ -39,10 +39,19 @@ backend-verify: prepare
 	cd backend && ~/.local/bin/uv run import-linter lint --config pyproject.toml
 	cd backend && ~/.local/bin/uv run pytest
 
+kotlin-run:
+	cd backend-kotlin && ./mvnw compile exec:java
+
+kotlin-test:
+	cd backend-kotlin && ./mvnw test
+
+kotlin-verify:
+	cd backend-kotlin && ./mvnw verify
+
 frontend-verify:
 	cd frontend && npm install
 	cd frontend && npx svelte-check --tsconfig ./tsconfig.json
 	cd frontend && npm run build
 
-verify: backend-verify frontend-verify smoke-test
+verify: backend-verify kotlin-verify frontend-verify smoke-test
 	docker compose config > /dev/null
