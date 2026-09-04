@@ -1,7 +1,7 @@
 package dev.iaassim.adapters.vsphere
 
 import com.vmware.sdk.vsphere.utils.PropertyCollectorHelper
-import com.vmware.sdk.vsphere.utils.VcenterClientFactory
+import com.vmware.sdk.vsphere.utils.VimClientFactory
 import com.vmware.vim25.ManagedObjectReference
 import com.vmware.vim25.ManagedObjectNotFoundFaultMsg
 import com.vmware.vim25.ManagedObjectType
