@@ -76,7 +76,7 @@ class VSphereAdapter(private val configuration: VSphereConfiguration = VSphereCo
         load(null, null)
     }
 
-    private fun connect() = VcenterClientFactory(
+    private fun connect() = VimClientFactory(
         configuration.host,
         configuration.port,
         30_000,
