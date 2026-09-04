@@ -32,6 +32,8 @@ smoke-test: prepare
 		-v "$(CURDIR)/backend/tests/test_vcsim_smoke.py:/tmp/test_vcsim_smoke.py:ro" \
 		-w /app \
 		iaas-sim bash -lc '. .venv/bin/activate && PYTHONPATH=/app/src pytest -q /tmp/test_vcsim_smoke.py'
+	cd backend-kotlin && VSPHERE_SMOKE=1 VSPHERE_HOST=127.0.0.1 VSPHERE_PORT=8989 \
+		VSPHERE_USERNAME=user VSPHERE_PASSWORD=pass ./mvnw -q -Dtest=VSphereSmokeTest test
 
 backend-verify: prepare
 	cd backend && ~/.local/bin/uv sync --locked --all-extras
@@ -41,7 +43,8 @@ backend-verify: prepare
 	cd backend && ~/.local/bin/uv run import-linter lint --config pyproject.toml
 	cd backend && ~/.local/bin/uv run pytest
 
-kotlin-run:
+kotlin-run: prepare
+	docker compose up -d vcsim
 	cd backend-kotlin && ./mvnw compile exec:java
 
 kotlin-test:
