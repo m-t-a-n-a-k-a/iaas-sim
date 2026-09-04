@@ -6,7 +6,11 @@ import pytest
 
 import iaas_sim.application.virtual_machine as virtual_machine_application
 from iaas_sim.adapters.memory.operation import InMemoryOperationStore
-from iaas_sim.application.identity import BackendVirtualMachineRef, VirtualMachineIdentityNotFound
+from iaas_sim.application.identity import (
+    BackendVirtualMachineRef,
+    VirtualMachineIdentityNotFound,
+    VirtualMachineIdentityPersistenceFailure,
+)
 from iaas_sim.application.operation import BackendOperationRef, OperationPersistenceFailure
 from iaas_sim.application.virtual_machine import (
     ObservedVirtualMachine,
@@ -28,15 +32,23 @@ from iaas_sim.domain.entity.virtual_machine import (
     AlreadyStopped,
     PowerCommand,
     PowerState,
+    VirtualMachine,
     VirtualMachineId,
 )
 from iaas_sim.result import Err, Ok, Result
 
 VM_ID = VirtualMachineId(uuid7())
 REF = BackendVirtualMachineRef("vm-1")
+VM_ID_2 = VirtualMachineId(uuid7())
+VM_ID_3 = VirtualMachineId(uuid7())
+REF_2 = BackendVirtualMachineRef("vm-2")
+REF_3 = BackendVirtualMachineRef("vm-3")
 
 
 class Identity:
+    def find_by_backend_ref(self, backend_ref: BackendVirtualMachineRef):
+        return Ok(VM_ID if backend_ref == REF else None)
+
     def get_or_create_by_backend_ref(self, backend_ref: BackendVirtualMachineRef):
         return Ok(VM_ID)
 
@@ -84,11 +96,111 @@ class RecordingStore(InMemoryOperationStore):
         return super().create_running(operation, backend_ref)
 
 
+class ListIdentity:
+    def __init__(self, adoption_results, lookup_results):
+        self.adoption_results = adoption_results
+        self.lookup_results = lookup_results
+        self.get_or_create_calls = []
+        self.find_calls = []
+
+    def get_or_create_by_backend_ref(self, backend_ref):
+        self.get_or_create_calls.append(backend_ref)
+        return self.adoption_results[backend_ref]
+
+    def find_by_backend_ref(self, backend_ref):
+        self.find_calls.append(backend_ref)
+        return self.lookup_results[backend_ref]
+
+
+class ListPort:
+    def __init__(self, result):
+        self.result = result
+
+    def list_virtual_machines(self):
+        return self.result
+
+
 def test_list_and_get_project_public_identity():
     port = Port(PowerState.STOPPED)
     identity = Identity()
     assert list_virtual_machines(port, identity).value[0].id == VM_ID
     assert get_virtual_machine(port, identity, VM_ID).value.id == VM_ID
+
+
+def test_list_preserves_order_while_applying_each_identity_policy() -> None:
+    listed = (
+        ObservedVirtualMachine(REF, "adopted", PowerState.RUNNING),
+        ObservedVirtualMachine(REF_2, "exact", PowerState.STOPPED, VM_ID_2),
+        ObservedVirtualMachine(REF_3, "pending", PowerState.STOPPED, VM_ID_3),
+    )
+    identity = ListIdentity(
+        {REF: Ok(VM_ID)},
+        {REF_2: Ok(VM_ID_2), REF_3: Ok(None)},
+    )
+
+    result = list_virtual_machines(ListPort(Ok(listed)), identity)
+
+    assert result == Ok(
+        (
+            VirtualMachine(VM_ID, "adopted", PowerState.RUNNING),
+            VirtualMachine(VM_ID_2, "exact", PowerState.STOPPED),
+        )
+    )
+    assert identity.get_or_create_calls == [REF]
+    assert identity.find_calls == [REF_2, REF_3]
+
+
+@pytest.mark.parametrize(
+    ("observed", "adoption_results", "lookup_results", "failure", "expected_calls"),
+    [
+        pytest.param(
+            ObservedVirtualMachine(REF, "adoption", PowerState.STOPPED),
+            {REF: Err(VirtualMachineIdentityPersistenceFailure("adopt", "unavailable"))},
+            {},
+            VirtualMachineIdentityPersistenceFailure("adopt", "unavailable"),
+            ([REF], []),
+            id="unmarked-adoption-failure",
+        ),
+        pytest.param(
+            ObservedVirtualMachine(REF, "marked", PowerState.STOPPED, VM_ID),
+            {},
+            {REF: Err(VirtualMachineIdentityPersistenceFailure("find", "unavailable"))},
+            VirtualMachineIdentityPersistenceFailure("find", "unavailable"),
+            ([], [REF]),
+            id="marked-lookup-failure",
+        ),
+        pytest.param(
+            ObservedVirtualMachine(REF, "conflict", PowerState.STOPPED, VM_ID),
+            {},
+            {REF: Ok(VM_ID_2)},
+            VirtualMachineIdentityPersistenceFailure(
+                "list", "creation marker does not match identity mapping"
+            ),
+            ([], [REF]),
+            id="marked-conflicting-mapping",
+        ),
+    ],
+)
+def test_list_returns_exact_identity_policy_failure(
+    observed, adoption_results, lookup_results, failure, expected_calls
+) -> None:
+    identity = ListIdentity(adoption_results, lookup_results)
+
+    result = list_virtual_machines(ListPort(Ok((observed,))), identity)
+
+    assert result == Err(failure)
+    assert (identity.get_or_create_calls, identity.find_calls) == expected_calls
+
+
+def test_list_backend_failure_does_not_resolve_identities() -> None:
+    failure = VirtualMachineBackendFailure("list", "backend unavailable")
+    identity = ListIdentity({}, {})
+
+    result = list_virtual_machines(ListPort(Err(failure)), identity)
+
+    assert result == Err(failure)
+    assert identity.get_or_create_calls == []
+    assert identity.find_calls == []
 
 
 @pytest.mark.parametrize(

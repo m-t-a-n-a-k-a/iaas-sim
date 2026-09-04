@@ -1,5 +1,6 @@
 # pyright: strict
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import assert_type
 
@@ -9,9 +10,10 @@ from iaas_sim.application.virtual_machine import (
     ApplicationError,
     VirtualMachinePort,
     execute_power_command,
+    list_virtual_machines,
 )
 from iaas_sim.domain.entity.operation import Operation, OperationId
-from iaas_sim.domain.entity.virtual_machine import PowerCommand, VirtualMachineId
+from iaas_sim.domain.entity.virtual_machine import PowerCommand, VirtualMachine, VirtualMachineId
 from iaas_sim.result import Ok, Result, ResultUnwrapper, result_workflow
 
 
@@ -53,6 +55,16 @@ def _mapped_heterogeneous_workflow(
 
 
 assert_type(_mapped_heterogeneous_workflow(), Result[TypedFinalValue, PublicError])
+
+
+def assert_list_virtual_machines_signature(
+    port: VirtualMachinePort,
+    identity: VirtualMachineIdentityPort,
+) -> None:
+    assert_type(
+        list_virtual_machines(port, identity),
+        Result[Sequence[VirtualMachine], ApplicationError],
+    )
 
 
 def assert_execute_power_command_signature(

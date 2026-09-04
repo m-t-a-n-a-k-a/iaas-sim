@@ -160,34 +160,45 @@ def _as_application_error(error: ApplicationError) -> ApplicationError:
     return error
 
 
-def list_virtual_machines(
-    port: VirtualMachinePort, identity: VirtualMachineIdentityPort
-) -> Result[Sequence[VirtualMachine], ApplicationError]:
-    listed = port.list_virtual_machines()
-    if isinstance(listed, Err):
-        return Err[ApplicationError](listed.error)
-
-    projected: list[VirtualMachine] = []
-    for vm in listed.value:
-        if vm.creation_virtual_machine_id is None:
-            mapped = identity.get_or_create_by_backend_ref(vm.backend_ref)
-        else:
-            existing = identity.find_by_backend_ref(vm.backend_ref)
-            if isinstance(existing, Err):
-                return Err[ApplicationError](existing.error)
-            if existing.value is None:
-                continue
-            if existing.value != vm.creation_virtual_machine_id:
-                return Err[ApplicationError](
-                    VirtualMachineIdentityPersistenceFailure(
-                        "list", "creation marker does not match identity mapping"
-                    )
-                )
-            mapped = Ok(existing.value)
+def _resolve_listed_virtual_machine_id(
+    vm: ObservedVirtualMachine, identity: VirtualMachineIdentityPort
+) -> Result[VirtualMachineId | None, ApplicationError]:
+    marker = vm.creation_virtual_machine_id
+    if marker is None:
+        mapped = identity.get_or_create_by_backend_ref(vm.backend_ref)
         if isinstance(mapped, Err):
             return Err[ApplicationError](mapped.error)
-        projected.append(VirtualMachine(mapped.value, vm.name, vm.power_state))
-    return Ok(tuple(projected))
+        return Ok(mapped.value)
+
+    existing = identity.find_by_backend_ref(vm.backend_ref)
+    if isinstance(existing, Err):
+        return Err[ApplicationError](existing.error)
+    if existing.value is None:
+        return Ok(None)
+    if existing.value != marker:
+        return Err[ApplicationError](
+            VirtualMachineIdentityPersistenceFailure(
+                "list", "creation marker does not match identity mapping"
+            )
+        )
+    return Ok(existing.value)
+
+
+@result_workflow
+def list_virtual_machines(
+    unwrap: ResultUnwrapper[ApplicationError],
+    port: VirtualMachinePort,
+    identity: VirtualMachineIdentityPort,
+) -> Sequence[VirtualMachine]:
+    listed = unwrap.map_error(port.list_virtual_machines(), _as_application_error)
+
+    projected: list[VirtualMachine] = []
+    for vm in listed:
+        public_id = unwrap(_resolve_listed_virtual_machine_id(vm, identity))
+        if public_id is None:
+            continue
+        projected.append(VirtualMachine(public_id, vm.name, vm.power_state))
+    return tuple(projected)
 
 
 def get_virtual_machine(
