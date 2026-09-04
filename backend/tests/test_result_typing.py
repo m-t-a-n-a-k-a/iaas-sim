@@ -10,6 +10,7 @@ from iaas_sim.application.virtual_machine import (
     ApplicationError,
     VirtualMachinePort,
     execute_power_command,
+    get_virtual_machine,
     list_virtual_machines,
 )
 from iaas_sim.domain.entity.operation import Operation, OperationId
@@ -55,6 +56,17 @@ def _mapped_heterogeneous_workflow(
 
 
 assert_type(_mapped_heterogeneous_workflow(), Result[TypedFinalValue, PublicError])
+
+
+def assert_get_virtual_machine_signature(
+    port: VirtualMachinePort,
+    identity: VirtualMachineIdentityPort,
+    virtual_machine_id: VirtualMachineId,
+) -> None:
+    assert_type(
+        get_virtual_machine(port, identity, virtual_machine_id),
+        Result[VirtualMachine, ApplicationError],
+    )
 
 
 def assert_list_virtual_machines_signature(
