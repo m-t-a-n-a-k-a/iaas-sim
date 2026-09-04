@@ -18,6 +18,7 @@ import dev.iaassim.domain.entity.virtualmachine.VirtualMachineId
 import dev.iaassim.result.Err
 import dev.iaassim.result.Ok
 import dev.iaassim.result.Outcome
+import java.security.KeyStore
 import java.util.UUID
 
 private const val CREATION_MARKER = "iaas-sim.internal.publicVirtualMachineId"
@@ -70,13 +71,18 @@ class VSphereAdapter(private val configuration: VSphereConfiguration = VSphereCo
         Err(VirtualMachineBackendFailure("get", safeReason(exception)))
     }
 
+    private fun emptyTrustStore(): KeyStore =
+    KeyStore.getInstance(KeyStore.getDefaultType()).apply {
+        load(null, null)
+    }
+
     private fun connect() = VcenterClientFactory(
         configuration.host,
         configuration.port,
         30_000,
         60_000,
-        true,
-        null,
+        false,
+        emptyTrustStore(),
     ).createClient(configuration.username, configuration.password, null)
 
     private fun project(
