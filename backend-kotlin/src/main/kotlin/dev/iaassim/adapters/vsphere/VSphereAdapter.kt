@@ -7,6 +7,8 @@ import com.vmware.vim25.ManagedObjectReference
 import com.vmware.vim25.ManagedObjectNotFoundFaultMsg
 import com.vmware.vim25.ManagedObjectType
 import com.vmware.vim25.OptionValue
+import com.vmware.vim25.VirtualMachineConfigSpec
+import com.vmware.vim25.VirtualMachineFileInfo
 import com.vmware.vim25.VirtualMachinePowerState
 import com.vmware.vim25.TaskInfoState
 import dev.iaassim.application.BackendOperationFailed
@@ -23,6 +25,9 @@ import dev.iaassim.application.VirtualMachineBackendError
 import dev.iaassim.application.VirtualMachineBackendFailure
 import dev.iaassim.application.VirtualMachineBackendNotFound
 import dev.iaassim.application.VirtualMachinePort
+import dev.iaassim.application.VirtualMachineCreateSpec
+import dev.iaassim.application.VirtualMachineCreateBackendSubmissionFailure
+import dev.iaassim.application.BackendVirtualMachineCreated
 import dev.iaassim.domain.entity.virtualmachine.PowerState
 import dev.iaassim.domain.entity.virtualmachine.PowerCommand
 import dev.iaassim.domain.entity.virtualmachine.VirtualMachineId
@@ -97,15 +102,42 @@ class VSphereAdapter(private val configuration: VSphereConfiguration = VSphereCo
         Err(PowerCommandBackendSubmissionFailure(backendRef, safeReason(exception)))
     }
 
+    override fun submitCreateVirtualMachine(virtualMachineId: VirtualMachineId, spec: VirtualMachineCreateSpec):
+        Outcome<BackendOperationRef, VirtualMachineCreateBackendSubmissionFailure> = try {
+        connect().use { client ->
+            val helper = PropertyCollectorHelper(client.vimPort, client.vimServiceContent)
+            val datacenter = firstByName(helper, client.vimServiceContent.rootFolder, ManagedObjectType.DATACENTER)
+            val pool = firstByName(helper, client.vimServiceContent.rootFolder, ManagedObjectType.RESOURCE_POOL).first
+            val datastore = firstByName(helper, datacenter.first, ManagedObjectType.DATASTORE)
+            val folderValue = helper.fetchProperties(datacenter.first, "vmFolder")["vmFolder"]
+            val folder = when (folderValue) { is ManagedObjectReference -> folderValue; else -> error("Datacenter VM folder unavailable") }
+            val config = VirtualMachineConfigSpec().apply {
+                name = spec.name
+                numCPUs = spec.vcpus
+                memoryMB = spec.memoryMiB.toLong()
+                guestId = "otherGuest64"
+                files = VirtualMachineFileInfo().apply { vmPathName = "[${datastore.second}]" }
+                extraConfig.add(OptionValue().apply { key = CREATION_MARKER; value = virtualMachineId.value.toString() })
+            }
+            Ok(BackendOperationRef(client.vimPort.createVMTask(folder, config, pool, null).value))
+        }
+    } catch (exception: Exception) { Err(VirtualMachineCreateBackendSubmissionFailure(safeReason(exception))) }
+
     override fun getOperationStatus(backendRef: BackendOperationRef):
         Outcome<BackendOperationStatus, OperationPollingFailure> = try {
         connect().use { client ->
             val task = ManagedObjectReference().apply { type = "Task"; value = backendRef.value }
             val properties = PropertyCollectorHelper(client.vimPort, client.vimServiceContent)
-                .fetchProperties(task, "info.state", "info.error")
+                .fetchProperties(task, "info.state", "info.error", "info.result")
             when (properties["info.state"]) {
                 TaskInfoState.QUEUED, TaskInfoState.RUNNING -> Ok(BackendOperationRunning)
-                TaskInfoState.SUCCESS -> Ok(BackendOperationSucceeded)
+                TaskInfoState.SUCCESS -> when (val value = properties["info.result"]) {
+                    null -> Ok(BackendOperationSucceeded())
+                    is ManagedObjectReference -> if (value.type == "VirtualMachine")
+                        Ok(BackendOperationSucceeded(BackendVirtualMachineCreated(BackendVirtualMachineRef(value.value))))
+                    else Err(OperationPollingFailure("unsupported backend task result"))
+                    else -> Err(OperationPollingFailure("unsupported backend task result"))
+                }
                 TaskInfoState.ERROR -> Ok(BackendOperationFailed("backend task reported error"))
                 else -> Err(OperationPollingFailure("unsupported backend task state"))
             }
@@ -120,6 +152,16 @@ class VSphereAdapter(private val configuration: VSphereConfiguration = VSphereCo
         false,
         emptyTrustStore(),
     ).createClient(configuration.username, configuration.password, null)
+
+    private fun firstByName(helper: PropertyCollectorHelper, root: ManagedObjectReference,
+        type: ManagedObjectType): Pair<ManagedObjectReference, String> {
+        val references = helper.getObjects(root, type).values.flatten()
+        val named = helper.fetchProperties(references, "name").entries.map { (reference, properties) ->
+            val name = when (val value = properties?.get("name")) { is String -> value; else -> error("inventory name unavailable") }
+            Pair(reference, name)
+        }
+        return named.sortedWith(compareBy<Pair<ManagedObjectReference, String>> { it.second }.thenBy { it.first.value }).first()
+    }
 
     private fun emptyTrustStore(): KeyStore = KeyStore.getInstance(KeyStore.getDefaultType()).apply {
         load(null, null)

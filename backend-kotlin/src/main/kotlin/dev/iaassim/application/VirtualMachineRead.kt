@@ -30,6 +30,11 @@ interface VirtualMachinePort {
         backendRef: BackendVirtualMachineRef,
         command: PowerCommand,
     ): Outcome<BackendOperationRef, PowerCommandBackendSubmissionFailure>
+    fun submitCreateVirtualMachine(
+        virtualMachineId: VirtualMachineId,
+        spec: VirtualMachineCreateSpec,
+    ): Outcome<BackendOperationRef, VirtualMachineCreateBackendSubmissionFailure> =
+        Err(VirtualMachineCreateBackendSubmissionFailure("create not supported"))
 }
 
 data class PowerCommandBackendSubmissionFailure(val backendRef: BackendVirtualMachineRef, val reason: String)

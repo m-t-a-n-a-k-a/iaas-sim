@@ -8,7 +8,7 @@
 
 `VirtualMachine.power_state` は希望状態ではなく、バックエンドから観測した状態です。コマンドの受付は完了を意味しません。受け付けた非同期コマンドには `202 Accepted` を返し、完了または失敗まで永続的な `Operation` Resource で追跡します。
 
-移行先 backend は Kotlin/JVM、Ktor、Maven を使用します。Phase K0 と K1 で実行可能 skeleton、immutable な VirtualMachine Domain model、純粋な power-command validation、型付けされた expected-failure 基盤を構築しました。Phase K2 では VirtualMachine read を追加しました。Phase K3 では非同期 START/STOP command、SQLite に永続化する Operation、terminal state を永続化する GET polling、live `vcsim` Task integration を追加しました。VirtualMachine identity mapping は引き続き一時的な process-local memory です。
+移行先 backend は Kotlin/JVM、Ktor、Maven を使用します。Phase K0〜K3 で実行可能 skeleton、型付けされた Domain 基盤、VirtualMachine read、非同期 START/STOP command、SQLite に永続化する Operation、live `vcsim` Task integration を構築しました。Phase K4 では durable SQLite VirtualMachine identity、永続的な InstanceType Resource、preallocate した UUIDv7 と creation marker を使う blank VM 作成、非同期 CREATE Operation、identity binding と Operation success の atomic commit を追加しました。
 
 ## Kotlin への段階的移行
 
@@ -18,7 +18,8 @@
 - **K1（完了）:** Kotlin-native Domain と expected-failure 基盤
 - **K2（完了）:** VirtualMachine read vertical slice
 - **K3（完了）:** VirtualMachine command / Operation vertical slice
-- **K4（次）:** 次の incremental vertical slice
+- **K4（完了）:** durable identity / InstanceType / VirtualMachine CREATE vertical slice
+- **K5（次）:** 次の incremental vertical slice
 
 ## アーキテクチャと expected failure
 
@@ -66,4 +67,4 @@ dev container は Python 3.14、uv、Node.js 24、Docker-in-Docker、JDK 21 を�
 
 ## 現在の制限
 
-Python application は Docker Compose 内から `vcsim` へ接続し、K2 では host で動く Kotlin backend のため `vcsim` を host loopback のみに公開します。Kotlin は health、VirtualMachine list/get read、非同期 START/STOP submission、SQLite に永続化した Operation lookup と live VMware Task polling を実装しています。terminal Operation state は永続化されますが、VirtualMachine public identity mapping は一時的な process-local memory であり、再起動時に失われます。認証、認可、observability は未移植です。IAM、metering、queue、retry policy、より広範な cloud-domain behavior は未実装です。`make verify` は Python、Kotlin、frontend、architecture、smoke、Compose の check を実行します。
+Python application は Docker Compose 内から `vcsim` へ接続し、host で動く Kotlin backend のため `vcsim` を host loopback のみに公開します。Kotlin は health、VirtualMachine と InstanceType の read、非同期 START/STOP と blank CREATE submission、SQLite に永続化した Operation と identity、live VMware Task polling を実装しています。marker 付きの created VM は、future UUIDv7 mapping と CREATE Operation success が atomic に commit されるまで非表示であり、live `vcsim` CreateVM integration でこの flow を確認します。認証、認可、observability は未移植です。IAM、metering、queue、retry policy、より広範な cloud-domain behavior は未実装です。`make verify` は Python、Kotlin、frontend、architecture、smoke、Compose の check を実行します。
