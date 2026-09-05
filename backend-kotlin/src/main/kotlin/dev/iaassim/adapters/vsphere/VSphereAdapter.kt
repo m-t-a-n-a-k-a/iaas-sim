@@ -2,6 +2,7 @@ package dev.iaassim.adapters.vsphere
 
 import com.vmware.sdk.vsphere.utils.PropertyCollectorHelper
 import com.vmware.sdk.vsphere.utils.VcenterClientFactory
+import com.vmware.vim25.ArrayOfOptionValue
 import com.vmware.vim25.ManagedObjectReference
 import com.vmware.vim25.ManagedObjectNotFoundFaultMsg
 import com.vmware.vim25.ManagedObjectType
@@ -104,7 +105,7 @@ class VSphereAdapter(private val configuration: VSphereConfiguration = VSphereCo
             powerState,
             when (val extraConfig = properties["config.extraConfig"]) {
                 null -> null
-                is List<*> -> creationMarker(extraConfig)
+                is ArrayOfOptionValue -> creationMarker(extraConfig.optionValue)
                 else -> error("malformed VM extraConfig")
             },
         )
