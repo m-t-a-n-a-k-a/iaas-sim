@@ -48,10 +48,10 @@ kotlin-run: prepare
 	cd backend-kotlin && ./mvnw compile exec:java
 
 kotlin-test:
-	cd backend-kotlin && ./mvnw test
+	cd backend-kotlin && ./mvnw -B -ntp test
 
 kotlin-verify:
-	cd backend-kotlin && ./mvnw verify
+	cd backend-kotlin && ./mvnw -B -ntp verify
 
 frontend-verify:
 	cd frontend && $(NPM_INSTALL_COMMAND)
