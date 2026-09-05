@@ -7,7 +7,9 @@ import dev.iaassim.result.Outcome
 @JvmInline value class BackendOperationRef(val value: String)
 sealed interface BackendOperationStatus
 data object BackendOperationRunning : BackendOperationStatus
-data object BackendOperationSucceeded : BackendOperationStatus
+sealed interface BackendOperationResult
+data class BackendVirtualMachineCreated(val backendRef: BackendVirtualMachineRef) : BackendOperationResult
+data class BackendOperationSucceeded(val result: BackendOperationResult? = null) : BackendOperationStatus
 data class BackendOperationFailed(val reason: String) : BackendOperationStatus
 
 data class OperationNotFound(val operationId: OperationId) : OperationStoreError, GetOperationError
@@ -25,4 +27,9 @@ interface OperationStorePort {
 
 interface BackendOperationPort {
     fun getOperationStatus(backendRef: BackendOperationRef): Outcome<BackendOperationStatus, OperationPollingFailure>
+}
+
+interface VirtualMachineCreateFinalizerPort {
+    fun finalizeVirtualMachineCreate(operation: Operation, virtualMachineId: dev.iaassim.domain.entity.virtualmachine.VirtualMachineId,
+        backendRef: BackendVirtualMachineRef): Outcome<Operation, OperationPersistenceFailure>
 }

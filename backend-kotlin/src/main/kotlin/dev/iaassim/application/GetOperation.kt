@@ -10,7 +10,8 @@ import dev.iaassim.result.Err
 import dev.iaassim.result.Ok
 import dev.iaassim.result.Outcome
 
-fun getOperation(store: OperationStorePort, backend: BackendOperationPort, operationId: OperationId):
+fun getOperation(store: OperationStorePort, backend: BackendOperationPort, operationId: OperationId,
+    finalizer: VirtualMachineCreateFinalizerPort? = null):
     Outcome<Operation, GetOperationError> {
     val stored = when (val result = store.get(operationId)) {
         is Ok -> result.value
@@ -24,7 +25,20 @@ fun getOperation(store: OperationStorePort, backend: BackendOperationPort, opera
         is Err -> return Err(result.error)
         is Ok -> when (result.value) {
             BackendOperationRunning -> return Ok(stored.operation)
-            BackendOperationSucceeded -> stored.operation.copy(status = Succeeded)
+            is BackendOperationSucceeded -> {
+                if (stored.operation.target.resourceType == "virtualMachines" && stored.operation.action == "CREATE") {
+                    val created = result.value.result
+                    if (created !is BackendVirtualMachineCreated) return Err(OperationPollingFailure("VM create result unavailable"))
+                    val uuid = try { java.util.UUID.fromString(stored.operation.target.id) }
+                    catch (exception: IllegalArgumentException) { return Err(OperationPersistenceFailure("reconcile", "invalid VM target ID")) }
+                    if (uuid.version() != 7) return Err(OperationPersistenceFailure("reconcile", "invalid VM target ID"))
+                    val requiredFinalizer = finalizer
+                        ?: return Err(OperationPersistenceFailure("reconcile", "VM create finalizer unavailable"))
+                    return requiredFinalizer.finalizeVirtualMachineCreate(stored.operation,
+                        dev.iaassim.domain.entity.virtualmachine.VirtualMachineId(uuid), created.backendRef)
+                }
+                stored.operation.copy(status = Succeeded)
+            }
             is BackendOperationFailed -> stored.operation.copy(status = Failed(OperationFailure("Backend operation failed")))
         }
     }

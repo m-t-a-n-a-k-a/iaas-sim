@@ -26,20 +26,10 @@ import java.util.UUID
 
 class SQLiteOperationStore(private val path: Path = Path.of(System.getenv("IAAS_SIM_DB_PATH") ?: "iaas-sim.db")) :
     OperationStorePort {
-    init { initialize() }
+    private val schema = SQLiteSchema(path)
+    init { schema.initialize() }
 
-    private fun connection(): Connection = DriverManager.getConnection("jdbc:sqlite:${path.toAbsolutePath()}")
-
-    private fun initialize() = connection().use { connection -> connection.createStatement().use { statement ->
-        statement.executeUpdate("""
-            CREATE TABLE IF NOT EXISTS operation (
-              id TEXT PRIMARY KEY, target_resource_type TEXT NOT NULL, target_resource_id TEXT NOT NULL,
-              action TEXT NOT NULL, state TEXT NOT NULL, failure_reason TEXT, backend_ref TEXT NOT NULL,
-              CHECK (state IN ('RUNNING', 'SUCCEEDED', 'FAILED')),
-              CHECK ((state = 'FAILED' AND failure_reason IS NOT NULL) OR (state <> 'FAILED' AND failure_reason IS NULL))
-            ) STRICT
-        """.trimIndent())
-    } }
+    private fun connection(): Connection = schema.connection()
 
     override fun createRunning(operation: Operation, backendRef: BackendOperationRef):
         Outcome<Operation, OperationPersistenceFailure> {

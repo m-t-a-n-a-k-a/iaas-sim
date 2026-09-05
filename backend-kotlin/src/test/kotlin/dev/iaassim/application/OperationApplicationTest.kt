@@ -30,7 +30,7 @@ class OperationApplicationTest {
         }
     }
     @Test fun `running polling decision table persists only terminal sanitized results`() {
-        val cases = listOf(BackendOperationRunning to Running, BackendOperationSucceeded to Succeeded,
+        val cases = listOf(BackendOperationRunning to Running, BackendOperationSucceeded() to Succeeded,
             BackendOperationFailed("vcenter secret") to Failed(OperationFailure("Backend operation failed")))
         cases.forEach { (backendStatus, expected) ->
             val store = OperationFakeStore(Ok(StoredOperation(operation(Running), BackendOperationRef("task-secret"))))
@@ -45,6 +45,6 @@ class OperationApplicationTest {
         assertIs<Err<OperationPollingFailure>>(getOperation(OperationFakeStore(running),
             OperationFakeBackend(Err(OperationPollingFailure("down"))), operationId))
         assertIs<Err<OperationPersistenceFailure>>(getOperation(OperationFakeStore(running, true),
-            OperationFakeBackend(Ok(BackendOperationSucceeded)), operationId))
+            OperationFakeBackend(Ok(BackendOperationSucceeded())), operationId))
     }
 }

@@ -8,7 +8,7 @@ The complete, executable control plane remains the Python 3.14 implementation in
 
 `VirtualMachine.power_state` is observed backend state, not desired state. Command acceptance is not command completion: accepted asynchronous commands return `202 Accepted` and are tracked by durable `Operation` Resources through completion or failure.
 
-The target backend is Kotlin/JVM with Ktor and Maven. Phases K0 and K1 established the executable skeleton, immutable VirtualMachine Domain model, pure power-command validation, and typed expected-failure foundation. Phase K2 added VirtualMachine reads. Phase K3 adds asynchronous START/STOP commands, persistent SQLite Operations, GET polling with terminal-state persistence, and live `vcsim` Task integration. VirtualMachine identity mapping remains temporary process-local memory.
+The target backend is Kotlin/JVM with Ktor and Maven. Phases K0–K3 established the executable skeleton, typed Domain foundation, VirtualMachine reads, asynchronous START/STOP commands, persistent SQLite Operations, and live `vcsim` Task integration. Phase K4 adds durable SQLite VirtualMachine identity, persistent InstanceType Resources, and blank VM creation with a preallocated UUIDv7, creation marker, asynchronous CREATE Operation, and atomic identity binding plus Operation success.
 
 ## Incremental Kotlin migration
 
@@ -18,7 +18,8 @@ Migration is incremental rather than a big-bang rewrite. The Python backend rema
 - **K1 (complete):** Kotlin-native Domain and expected-failure foundation
 - **K2 (complete):** VirtualMachine read vertical slice
 - **K3 (complete):** VirtualMachine command / Operation vertical slice
-- **K4 (next):** next incremental vertical slice
+- **K4 (complete):** durable identity / InstanceType / VirtualMachine CREATE vertical slice
+- **K5 (next):** next incremental vertical slice
 
 ## Architecture and expected failures
 
@@ -66,4 +67,4 @@ The dev container includes Python 3.14, uv, Node.js 24, Docker-in-Docker, and JD
 
 ## Current limitations
 
-The Python application connects to `vcsim` inside Docker Compose, while K2 publishes `vcsim` only on host loopback for the host-run Kotlin backend. Kotlin implements health, VirtualMachine list/get reads, asynchronous START/STOP submission, and persistent SQLite Operation lookup with live VMware Task polling. Terminal Operation states are persisted; VirtualMachine public identity mapping remains temporary process-local memory and is lost on restart. Authentication, authorization, and observability have not been migrated. IAM, metering, queues, retry policy, and broader cloud-domain behavior are not yet implemented. `make verify` enforces the Python, Kotlin, frontend, architecture, smoke, and Compose checks.
+The Python application connects to `vcsim` inside Docker Compose, while `vcsim` is published only on host loopback for the host-run Kotlin backend. Kotlin implements health, VirtualMachine and InstanceType reads, asynchronous START/STOP and blank CREATE submission, persistent SQLite Operations and identities, and live VMware Task polling. A marked created VM remains hidden until its future UUIDv7 mapping and successful CREATE Operation are committed atomically; live `vcsim` CreateVM integration exercises this flow. Authentication, authorization, and observability have not been migrated. IAM, metering, queues, retry policy, and broader cloud-domain behavior are not yet implemented. `make verify` enforces the Python, Kotlin, frontend, architecture, smoke, and Compose checks.

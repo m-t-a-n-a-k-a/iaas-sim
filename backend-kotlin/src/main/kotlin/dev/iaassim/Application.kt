@@ -1,6 +1,8 @@
 package dev.iaassim
 
-import dev.iaassim.adapters.identity.InMemoryVirtualMachineIdentityAdapter
+import dev.iaassim.adapters.sqlite.SQLiteVirtualMachineIdentityAdapter
+import dev.iaassim.adapters.sqlite.SQLiteInstanceTypeStore
+import dev.iaassim.adapters.sqlite.SQLiteVirtualMachineCreateFinalizer
 import dev.iaassim.adapters.vsphere.VSphereAdapter
 import dev.iaassim.adapters.sqlite.SQLiteOperationStore
 import com.github.f4b6a3.uuid.UuidCreator
@@ -46,21 +48,29 @@ import io.ktor.server.engine.embeddedServer
 import io.ktor.server.netty.Netty
 import io.ktor.server.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.server.response.respond
+import io.ktor.server.request.receive
 import io.ktor.server.routing.get
 import io.ktor.server.routing.post
 import io.ktor.server.routing.routing
 import java.util.UUID
+import java.nio.file.Path
+import dev.iaassim.application.*
+import dev.iaassim.domain.entity.instancetype.InstanceTypeId
 
 data class VirtualMachineDependencies(
     val port: VirtualMachinePort,
     val identity: VirtualMachineIdentityPort,
     val operations: OperationStorePort,
     val backendOperations: BackendOperationPort,
+    val instanceTypes: InstanceTypeStorePort = SQLiteInstanceTypeStore(),
+    val createFinalizer: VirtualMachineCreateFinalizerPort = SQLiteVirtualMachineCreateFinalizer(),
 )
 
 private fun defaultDependencies(): VirtualMachineDependencies {
     val adapter = VSphereAdapter()
-    return VirtualMachineDependencies(adapter, InMemoryVirtualMachineIdentityAdapter(), SQLiteOperationStore(), adapter)
+    val path = Path.of(System.getenv("IAAS_SIM_DB_PATH") ?: "iaas-sim.db")
+    return VirtualMachineDependencies(adapter, SQLiteVirtualMachineIdentityAdapter(path), SQLiteOperationStore(path), adapter,
+        SQLiteInstanceTypeStore(path), SQLiteVirtualMachineCreateFinalizer(path))
 }
 
 data class VirtualMachineResponse(val id: String, val name: String, val powerState: String)
@@ -70,6 +80,10 @@ data class ResourceReferenceResponse(val resourceType: String, val id: String)
 data class OperationFailureResponse(val reason: String)
 data class OperationResponse(val id: String, val target: ResourceReferenceResponse, val action: String,
     val state: String, val failure: OperationFailureResponse?)
+data class InstanceTypeResponse(val id: String, val name: String, val vcpus: Int, val memoryMiB: Int)
+data class InstanceTypeListResponse(val items: List<InstanceTypeResponse>)
+data class VirtualMachineCreateReferenceRequest(val resourceType: String? = null, val id: String? = null)
+data class VirtualMachineCreateRequest(val name: String? = null, val instanceType: VirtualMachineCreateReferenceRequest? = null)
 
 fun Application.module(
     dependencies: VirtualMachineDependencies = defaultDependencies(),
@@ -81,6 +95,40 @@ fun Application.module(
             when (val result = listVirtualMachines(dependencies.port, dependencies.identity)) {
                 is Ok -> call.respond(VirtualMachineListResponse(result.value.map(::response)))
                 is Err -> respondError(result.error)
+            }
+        }
+        get("/v1/instanceTypes") {
+            when (val result = listInstanceTypes(dependencies.instanceTypes)) {
+                is Ok -> call.respond(InstanceTypeListResponse(result.value.map { InstanceTypeResponse(it.id.value.toString(), it.name, it.vcpus, it.memoryMiB) }))
+                is Err -> call.respond(HttpStatusCode.InternalServerError, ErrorResponse("InstanceType persistence failed"))
+            }
+        }
+        get("/v1/instanceTypes/{instanceTypeId}") {
+            val id = parseInstanceTypeId(call.parameters["instanceTypeId"])
+            if (id == null) { call.respond(HttpStatusCode.UnprocessableEntity, ErrorResponse("InstanceType ID must be a UUIDv7")); return@get }
+            when (val result = getInstanceType(dependencies.instanceTypes, id)) {
+                is Ok -> call.respond(InstanceTypeResponse(result.value.id.value.toString(), result.value.name, result.value.vcpus, result.value.memoryMiB))
+                is Err -> when (result.error) {
+                    is InstanceTypeNotFound -> call.respond(HttpStatusCode.NotFound, ErrorResponse("InstanceType not found"))
+                    is InstanceTypePersistenceFailure -> call.respond(HttpStatusCode.InternalServerError, ErrorResponse("InstanceType persistence failed"))
+                }
+            }
+        }
+        post("/v1/virtualMachines") {
+            val request = try { call.receive<VirtualMachineCreateRequest>() }
+                catch (_: Exception) { call.respond(HttpStatusCode.UnprocessableEntity, ErrorResponse("Invalid VirtualMachine create request")); return@post }
+            val reference = request.instanceType
+            if (request.name == null || reference?.resourceType != "instanceTypes" || reference.id == null) {
+                call.respond(HttpStatusCode.UnprocessableEntity, ErrorResponse("Invalid VirtualMachine create request")); return@post
+            }
+            val instanceTypeId = parseInstanceTypeId(reference.id)
+            if (instanceTypeId == null) { call.respond(HttpStatusCode.UnprocessableEntity, ErrorResponse("InstanceType ID must be a UUIDv7")); return@post }
+            val result = createVirtualMachine(dependencies.port, dependencies.instanceTypes, dependencies.operations,
+                VirtualMachineId(UuidCreator.getTimeOrderedEpoch()), OperationId(UuidCreator.getTimeOrderedEpoch()), request.name, instanceTypeId)
+            when (result) {
+                is Ok -> { call.response.headers.append("Location", "/v1/operations/${result.value.id.value}")
+                    call.respond(HttpStatusCode.Accepted, operationResponse(result.value)) }
+                is Err -> respondCreateError(result.error)
             }
         }
         get("/v1/virtualMachines/{virtualMachineId}") {
@@ -101,7 +149,7 @@ fun Application.module(
             if (id == null) {
                 call.respond(HttpStatusCode.UnprocessableEntity, ErrorResponse("Operation ID must be UUIDv7")); return@get
             }
-            when (val result = getOperation(dependencies.operations, dependencies.backendOperations, id)) {
+            when (val result = getOperation(dependencies.operations, dependencies.backendOperations, id, dependencies.createFinalizer)) {
                 is Ok -> call.respond(operationResponse(result.value))
                 is Err -> respondOperationError(result.error)
             }
@@ -119,6 +167,11 @@ private fun parseId(value: String?): VirtualMachineId? {
 private fun parseOperationId(value: String?): OperationId? {
     val uuid = try { UUID.fromString(value) } catch (_: IllegalArgumentException) { return null }
     return if (uuid.version() == 7) OperationId(uuid) else null
+}
+
+private fun parseInstanceTypeId(value: String?): InstanceTypeId? {
+    val uuid = try { UUID.fromString(value) } catch (_: IllegalArgumentException) { return null }
+    return if (uuid.version() == 7) InstanceTypeId(uuid) else null
 }
 
 private fun operationResponse(operation: Operation): OperationResponse {
@@ -156,6 +209,16 @@ private suspend fun io.ktor.server.routing.RoutingContext.respondCommandError(er
         is PowerCommandSubmissionFailure -> call.respond(HttpStatusCode.BadGateway, ErrorResponse("VirtualMachine power command submission failed"))
         is PowerCommandIdentityFailure -> call.respond(HttpStatusCode.InternalServerError, ErrorResponse("VirtualMachine identity persistence failed"))
         is PowerCommandOperationPersistenceFailure -> call.respond(HttpStatusCode.InternalServerError, ErrorResponse("Operation persistence failed"))
+    }
+}
+
+private suspend fun io.ktor.server.routing.RoutingContext.respondCreateError(error: VirtualMachineCreateError) {
+    when (error) {
+        is VirtualMachineCreateInstanceTypeNotFound -> call.respond(HttpStatusCode.NotFound, ErrorResponse("InstanceType not found"))
+        is VirtualMachineCreateInstanceTypePersistenceFailure -> call.respond(HttpStatusCode.InternalServerError, ErrorResponse("InstanceType persistence failed"))
+        is VirtualMachineCreateInvalidSpec -> call.respond(HttpStatusCode.UnprocessableEntity, ErrorResponse("Invalid VirtualMachine create request"))
+        is VirtualMachineCreateSubmissionFailure -> call.respond(HttpStatusCode.BadGateway, ErrorResponse("VirtualMachine creation submission failed"))
+        is VirtualMachineCreateOperationPersistenceFailure -> call.respond(HttpStatusCode.InternalServerError, ErrorResponse("Operation persistence failed"))
     }
 }
 
