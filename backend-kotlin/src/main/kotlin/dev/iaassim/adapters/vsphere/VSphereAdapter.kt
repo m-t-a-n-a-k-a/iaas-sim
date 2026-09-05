@@ -43,7 +43,7 @@ class VSphereAdapter(private val configuration: VSphereConfiguration = VSphereCo
                     references,
                     "name", "summary.runtime.powerState", "config.extraConfig",
                 )
-                Ok(references.map { reference -> project(reference, properties[reference]) })
+                Ok(properties.entries.map { (reference, vmProperties) -> project(reference, vmProperties) })
             }
         } catch (exception: Exception) {
             Err(VirtualMachineBackendFailure("list", safeReason(exception)))
