@@ -8,6 +8,15 @@ import com.vmware.vim25.ManagedObjectNotFoundFaultMsg
 import com.vmware.vim25.ManagedObjectType
 import com.vmware.vim25.OptionValue
 import com.vmware.vim25.VirtualMachinePowerState
+import com.vmware.vim25.TaskInfoState
+import dev.iaassim.application.BackendOperationFailed
+import dev.iaassim.application.BackendOperationPort
+import dev.iaassim.application.BackendOperationRef
+import dev.iaassim.application.BackendOperationRunning
+import dev.iaassim.application.BackendOperationStatus
+import dev.iaassim.application.BackendOperationSucceeded
+import dev.iaassim.application.OperationPollingFailure
+import dev.iaassim.application.PowerCommandBackendSubmissionFailure
 import dev.iaassim.application.BackendVirtualMachineRef
 import dev.iaassim.application.ObservedVirtualMachine
 import dev.iaassim.application.VirtualMachineBackendError
@@ -15,6 +24,7 @@ import dev.iaassim.application.VirtualMachineBackendFailure
 import dev.iaassim.application.VirtualMachineBackendNotFound
 import dev.iaassim.application.VirtualMachinePort
 import dev.iaassim.domain.entity.virtualmachine.PowerState
+import dev.iaassim.domain.entity.virtualmachine.PowerCommand
 import dev.iaassim.domain.entity.virtualmachine.VirtualMachineId
 import dev.iaassim.result.Err
 import dev.iaassim.result.Ok
@@ -31,7 +41,8 @@ data class VSphereConfiguration(
     val password: String = System.getenv("VSPHERE_PASSWORD") ?: "pass",
 )
 
-class VSphereAdapter(private val configuration: VSphereConfiguration = VSphereConfiguration()) : VirtualMachinePort {
+class VSphereAdapter(private val configuration: VSphereConfiguration = VSphereConfiguration()) :
+    VirtualMachinePort, BackendOperationPort {
     override fun listVirtualMachines(): Outcome<List<ObservedVirtualMachine>, VirtualMachineBackendFailure> =
         try {
             connect().use { client ->
@@ -71,6 +82,35 @@ class VSphereAdapter(private val configuration: VSphereConfiguration = VSphereCo
     } catch (exception: Exception) {
         Err(VirtualMachineBackendFailure("get", safeReason(exception)))
     }
+
+    override fun submitPowerCommand(backendRef: BackendVirtualMachineRef, command: PowerCommand):
+        Outcome<BackendOperationRef, PowerCommandBackendSubmissionFailure> = try {
+        connect().use { client ->
+            val vm = ManagedObjectReference().apply { type = "VirtualMachine"; value = backendRef.value }
+            val task = when (command) {
+                PowerCommand.START -> client.vimPort.powerOnVMTask(vm, null)
+                PowerCommand.STOP -> client.vimPort.powerOffVMTask(vm)
+            }
+            Ok(BackendOperationRef(task.value))
+        }
+    } catch (exception: Exception) {
+        Err(PowerCommandBackendSubmissionFailure(backendRef, safeReason(exception)))
+    }
+
+    override fun getOperationStatus(backendRef: BackendOperationRef):
+        Outcome<BackendOperationStatus, OperationPollingFailure> = try {
+        connect().use { client ->
+            val task = ManagedObjectReference().apply { type = "Task"; value = backendRef.value }
+            val properties = PropertyCollectorHelper(client.vimPort, client.vimServiceContent)
+                .fetchProperties(task, "info.state", "info.error")
+            when (properties["info.state"]) {
+                TaskInfoState.QUEUED, TaskInfoState.RUNNING -> Ok(BackendOperationRunning)
+                TaskInfoState.SUCCESS -> Ok(BackendOperationSucceeded)
+                TaskInfoState.ERROR -> Ok(BackendOperationFailed("backend task reported error"))
+                else -> Err(OperationPollingFailure("unsupported backend task state"))
+            }
+        }
+    } catch (exception: Exception) { Err(OperationPollingFailure(safeReason(exception))) }
 
     private fun connect() = VcenterClientFactory(
         configuration.host,

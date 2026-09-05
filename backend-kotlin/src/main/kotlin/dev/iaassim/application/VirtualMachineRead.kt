@@ -1,6 +1,7 @@
 package dev.iaassim.application
 
 import dev.iaassim.domain.entity.virtualmachine.PowerState
+import dev.iaassim.domain.entity.virtualmachine.PowerCommand
 import dev.iaassim.domain.entity.virtualmachine.VirtualMachine
 import dev.iaassim.domain.entity.virtualmachine.VirtualMachineId
 import dev.iaassim.result.Err
@@ -25,7 +26,13 @@ data class VirtualMachineBackendFailure(val operation: String, val reason: Strin
 interface VirtualMachinePort {
     fun listVirtualMachines(): Outcome<List<ObservedVirtualMachine>, VirtualMachineBackendFailure>
     fun getVirtualMachine(backendRef: BackendVirtualMachineRef): Outcome<ObservedVirtualMachine, VirtualMachineBackendError>
+    fun submitPowerCommand(
+        backendRef: BackendVirtualMachineRef,
+        command: PowerCommand,
+    ): Outcome<BackendOperationRef, PowerCommandBackendSubmissionFailure>
 }
+
+data class PowerCommandBackendSubmissionFailure(val backendRef: BackendVirtualMachineRef, val reason: String)
 
 data class VirtualMachineIdentityNotFound(val virtualMachineId: VirtualMachineId) : VirtualMachineIdentityError
 data class VirtualMachineIdentityPersistenceFailure(val operation: String, val reason: String) :

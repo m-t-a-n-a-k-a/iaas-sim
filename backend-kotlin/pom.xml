@@ -48,6 +48,11 @@
       <version>6.1.1</version>
     </dependency>
     <dependency>
+      <groupId>org.xerial</groupId>
+      <artifactId>sqlite-jdbc</artifactId>
+      <version>3.53.4.0</version>
+    </dependency>
+    <dependency>
       <groupId>com.vmware.sdk</groupId>
       <artifactId>vsphere-utils</artifactId>
       <version>9.1.0.0</version>
