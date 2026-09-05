@@ -2,6 +2,7 @@ package dev.iaassim.application
 
 import dev.iaassim.adapters.identity.InMemoryVirtualMachineIdentityAdapter
 import dev.iaassim.domain.entity.virtualmachine.PowerState
+import dev.iaassim.domain.entity.virtualmachine.PowerCommand
 import dev.iaassim.domain.entity.virtualmachine.VirtualMachineId
 import dev.iaassim.result.Err
 import dev.iaassim.result.Ok
@@ -23,6 +24,8 @@ private class FakeVmPort(
 ) : VirtualMachinePort {
     override fun listVirtualMachines() = listed
     override fun getVirtualMachine(backendRef: BackendVirtualMachineRef) = got
+    override fun submitPowerCommand(backendRef: BackendVirtualMachineRef, command: PowerCommand):
+        Outcome<BackendOperationRef, PowerCommandBackendSubmissionFailure> = Ok(BackendOperationRef("task-1"))
 }
 
 class VirtualMachineReadTest {

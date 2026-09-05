@@ -8,7 +8,7 @@ The complete, executable control plane remains the Python 3.14 implementation in
 
 `VirtualMachine.power_state` is observed backend state, not desired state. Command acceptance is not command completion: accepted asynchronous commands return `202 Accepted` and are tracked by durable `Operation` Resources through completion or failure.
 
-The target backend is Kotlin/JVM with Ktor and Maven. Phases K0 and K1 established the executable skeleton, immutable VirtualMachine Domain model, pure power-command validation, and typed expected-failure foundation. Phase K2 adds the first business vertical slice: VirtualMachine list/get HTTP reads through Application Ports and the official VMware SDK to live `vcsim`, with temporary process-local UUIDv7 identity mapping.
+The target backend is Kotlin/JVM with Ktor and Maven. Phases K0 and K1 established the executable skeleton, immutable VirtualMachine Domain model, pure power-command validation, and typed expected-failure foundation. Phase K2 added VirtualMachine reads. Phase K3 adds asynchronous START/STOP commands, persistent SQLite Operations, GET polling with terminal-state persistence, and live `vcsim` Task integration. VirtualMachine identity mapping remains temporary process-local memory.
 
 ## Incremental Kotlin migration
 
@@ -17,7 +17,8 @@ Migration is incremental rather than a big-bang rewrite. The Python backend rema
 - **K0 (complete):** executable Kotlin/Ktor/Maven skeleton
 - **K1 (complete):** Kotlin-native Domain and expected-failure foundation
 - **K2 (complete):** VirtualMachine read vertical slice
-- **K3 (next):** VirtualMachine command / Operation vertical slice
+- **K3 (complete):** VirtualMachine command / Operation vertical slice
+- **K4 (next):** next incremental vertical slice
 
 ## Architecture and expected failures
 
@@ -42,7 +43,7 @@ make kotlin-test
 make kotlin-verify
 ```
 
-`make kotlin-run` starts `vcsim` and the Kotlin server. Check http://localhost:8080/health and http://localhost:8080/v1/virtualMachines. The health endpoint remains a liveness-only endpoint; K2 list/get responses read observed live simulator state. The lower-level equivalent is `cd backend-kotlin && ./mvnw ...`; a system Maven installation is not required.
+`make kotlin-run` starts `vcsim` and the Kotlin server. Check http://localhost:8080/health and http://localhost:8080/v1/virtualMachines. The health endpoint remains liveness-only; list/get responses read observed live simulator state, command endpoints return 202 Accepted with a persistent Operation, and GET Operation polls a running backend Task once per request. The lower-level equivalent is `cd backend-kotlin && ./mvnw ...`; a system Maven installation is not required.
 
 `make up` continues to start the current Python application through Docker Compose. Its health endpoint is http://localhost:8000/health, with API documentation at http://localhost:8000/docs and the UI at http://localhost:8000/ui. Stop it with `make down`.
 
@@ -65,4 +66,4 @@ The dev container includes Python 3.14, uv, Node.js 24, Docker-in-Docker, and JD
 
 ## Current limitations
 
-The Python application connects to `vcsim` inside Docker Compose, while K2 publishes `vcsim` only on host loopback for the host-run Kotlin backend. Kotlin currently implements health and VirtualMachine list/get reads with live VMware integration. Its public identity mapping is temporary, process-local memory and is lost on restart; it is migration infrastructure, not final persistence. SQLite, commands, authentication, authorization, and observability have not been migrated. IAM, metering, queues, retry policy, and broader cloud-domain behavior are not yet implemented. `make verify` enforces the Python, Kotlin, frontend, architecture, smoke, and Compose checks.
+The Python application connects to `vcsim` inside Docker Compose, while K2 publishes `vcsim` only on host loopback for the host-run Kotlin backend. Kotlin implements health, VirtualMachine list/get reads, asynchronous START/STOP submission, and persistent SQLite Operation lookup with live VMware Task polling. Terminal Operation states are persisted; VirtualMachine public identity mapping remains temporary process-local memory and is lost on restart. Authentication, authorization, and observability have not been migrated. IAM, metering, queues, retry policy, and broader cloud-domain behavior are not yet implemented. `make verify` enforces the Python, Kotlin, frontend, architecture, smoke, and Compose checks.

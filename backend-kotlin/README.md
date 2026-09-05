@@ -18,6 +18,6 @@ Then check:
 - `GET http://localhost:8080/v1/virtualMachines`
 
 Use `make kotlin-test` and `make kotlin-verify` for checks. The Maven Wrapper uses
-official `only-script` mode. K2 identity mappings are temporary in-memory state
-and are lost when the Kotlin process restarts. SQLite persistence, commands,
-START/STOP, and Operations are not migrated; K3 is next.
+official `only-script` mode. K3 is complete and K4 is next. VirtualMachine identity
+mappings remain temporary in-memory state and are lost when the Kotlin process
+restarts; only Operations are persisted in SQLite.
